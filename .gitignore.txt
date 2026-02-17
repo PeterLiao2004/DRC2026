@@ -1,0 +1,23 @@
+# KiCad project files
+*.kicad_pro-bak
+*.kicad_prl
+*-cache.lib
+*-rescue.lib
+*.kicad_sch-bak
+*.bak
+*.tmp
+*.dsn
+*.ses
+
+# 3D Viewer cache
+*.wrl
+*.step
+
+# Plot outputs
+*.gbr
+*.drl
+*.zip
+
+# System files
+Thumbs.db
+.DS_Store
