@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# C/C++ and Pico builds
+build/
+cmake-build-*/
+*.elf
+*.uf2
+*.bin
+*.map
+
+# Logs and local config
+*.log
+*.local
+.env
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
