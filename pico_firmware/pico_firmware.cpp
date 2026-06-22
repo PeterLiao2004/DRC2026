@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstdint>
 
+//---------------------Defines------------------//
 // Motor driver pins
 #define M1A 2
 #define M1B 3
@@ -40,10 +41,15 @@ static const int8_t QUADRATURE_DELTA[16] = {
      0,  1, -1,  0
 };
 
+//----------------------------------------------------//
+
+
+//-------------------Encoder Handling------------------//
+// This reads the two encoder pins and turns them into one number from 0 to 3.
 uint8_t read_encoder_state(uint a_pin, uint b_pin) {
     return static_cast<uint8_t>((gpio_get(a_pin) << 1) | gpio_get(b_pin));
 }
-
+// Encoder GPIO ISR: automatically runs whenever an encoder pin changes. Updates encoder counts and state.
 void encoder_gpio_callback(uint gpio, uint32_t events) {
     (void)events;
 
@@ -58,6 +64,7 @@ void encoder_gpio_callback(uint gpio, uint32_t events) {
     }
 }
 
+// Initializes encoder GPIOs and sets up interrupts to track encoder counts.
 void setup_encoders() {
     const uint pins[] = {M1_ENCODER_A, M1_ENCODER_B, M2_ENCODER_A, M2_ENCODER_B};
 
@@ -76,6 +83,24 @@ void setup_encoders() {
     gpio_set_irq_enabled(M2_ENCODER_A, edges, true);
     gpio_set_irq_enabled(M2_ENCODER_B, edges, true);
 }
+
+// Atomically reads the encoder counts. Should be called at a regular interval to track speed.
+void read_encoder_counts(int32_t &m1, int32_t &m2) {
+    uint32_t irq_state = save_and_disable_interrupts();
+    m1 = m1_encoder_count;
+    m2 = m2_encoder_count;
+    restore_interrupts(irq_state);
+}
+
+// Converts change in encoder counts over a sample period to RPM x10 (to avoid floating-point).
+int32_t counts_to_rpm_x10(int32_t delta_counts, uint32_t sample_ms) {
+    // RPM x10 avoids relying on floating-point printf support.
+    int64_t magnitude = delta_counts < 0 ? -(int64_t)delta_counts : delta_counts;
+    return static_cast<int32_t>((magnitude * 600000) /
+                                (ENCODER_COUNTS_PER_REV * sample_ms));
+}
+//----------------------------------------------------//
+//-------------------PWM/Motor Control------------------//
 
 void setup_pwm_pin(uint pin) {
     gpio_set_function(pin, GPIO_FUNC_PWM);
@@ -131,6 +156,7 @@ void motor2_set_percent(int speed_percent) {
         set_pwm(M2B, 0);
     }
 }
+//-------------------High-Level Motor Control-----------------//
 
 void stop_all() {
     motor1_set_percent(0);
@@ -140,81 +166,6 @@ void stop_all() {
 void drive_forward(int speed_percent) {
     motor1_set_percent(speed_percent);
     motor2_set_percent(-speed_percent);
-}
-
-void drive_forward_pwm(int pwm) {
-    // The motors are mounted in opposite directions on the drivetrain.
-    set_pwm(M1A, pwm);
-    set_pwm(M1B, 0);
-    set_pwm(M2A, 0);
-    set_pwm(M2B, pwm);
-}
-
-void read_encoder_counts(int32_t &m1, int32_t &m2) {
-    uint32_t irq_state = save_and_disable_interrupts();
-    m1 = m1_encoder_count;
-    m2 = m2_encoder_count;
-    restore_interrupts(irq_state);
-}
-
-int32_t counts_to_rpm_x10(int32_t delta_counts, uint32_t sample_ms) {
-    // RPM x10 avoids relying on floating-point printf support.
-    int64_t magnitude = delta_counts < 0 ? -(int64_t)delta_counts : delta_counts;
-    return static_cast<int32_t>((magnitude * 600000) /
-                                (ENCODER_COUNTS_PER_REV * sample_ms));
-}
-
-void print_rpm(int motor, int32_t delta_counts) {
-    int32_t rpm_x10 = counts_to_rpm_x10(delta_counts, RPM_SAMPLE_MS);
-    printf("M%d: %ld counts, %ld.%01ld RPM",
-           motor,
-           static_cast<long>(delta_counts),
-           static_cast<long>(rpm_x10 / 10),
-           static_cast<long>(rpm_x10 % 10));
-}
-
-void run_motor_speed_test() {
-    // Raw PWM levels include the measured start threshold and span the range.
-    const int pwm_levels[] = {350, 400, 500, 600, 700, 850, 1000};
-
-    printf("\nMotor speed sweep: %d encoder counts/rev, %d ms samples\n",
-           ENCODER_COUNTS_PER_REV, RPM_SAMPLE_MS);
-    printf("Keep the wheels safely clear. Starting in 2 seconds...\n");
-    sleep_ms(2000);
-
-    for (int pwm : pwm_levels) {
-        int percent = (pwm * 100) / PWM_WRAP;
-        printf("\n--- PWM %d/%d (%d%% duty) ---\n", pwm, PWM_WRAP, percent);
-
-        int32_t previous_m1;
-        int32_t previous_m2;
-        read_encoder_counts(previous_m1, previous_m2);
-        drive_forward_pwm(pwm);
-
-        for (int sample = 1; sample <= SAMPLES_PER_LEVEL; ++sample) {
-            sleep_ms(RPM_SAMPLE_MS);
-
-            int32_t current_m1;
-            int32_t current_m2;
-            read_encoder_counts(current_m1, current_m2);
-
-            printf("%d.%01d s\t", sample / 2, (sample % 2) * 5);
-            print_rpm(1, current_m1 - previous_m1);
-            printf("\t");
-            print_rpm(2, current_m2 - previous_m2);
-            printf("\n");
-
-            previous_m1 = current_m1;
-            previous_m2 = current_m2;
-        }
-
-        stop_all();
-        printf("Stopped\n");
-        sleep_ms(1500);
-    }
-
-    stop_all();
-    printf("\nSweep complete. Motors stopped. Press R to run it again.\n");
 }
 
 void drive_backward(int speed_percent) {
@@ -234,29 +185,34 @@ void turn_right(int speed_percent) {
     motor2_set_percent(speed_percent);
 }
 
+//------------------------Testing/Helpers -------------------------//
+// Helper function to print RPM in a human-friendly format.
+void print_rpm(int motor, int32_t delta_counts) {
+    int32_t rpm_x10 = counts_to_rpm_x10(delta_counts, RPM_SAMPLE_MS);
+    printf("M%d: %ld counts, %ld.%01ld RPM",
+           motor,
+           static_cast<long>(delta_counts),
+           static_cast<long>(rpm_x10 / 10),
+           static_cast<long>(rpm_x10 % 10));
+}
+//------------------------Main Loop-------------------------//
 int main() {
+    // Initialize stdio for printf debugging (over USB).
     stdio_init_all();
 
+    // Set up PWM pins and encoder GPIOs with interrupts.
     setup_pwm_pin(M1A);
     setup_pwm_pin(M1B);
     setup_pwm_pin(M2A);
     setup_pwm_pin(M2B);
     setup_encoders();
 
+    // Initialize all motors to stopped
     stop_all();
     sleep_ms(3000);
 
-    run_motor_speed_test();
-
     while (true) {
-        int input = getchar_timeout_us(0);
-        if (input == 'r' || input == 'R') run_motor_speed_test();
-     if (m1 != last_m1 || m2 != last_m2) {
-            printf("M1: %ld\tM2: %ld\n", static_cast<long>(m1), static_cast<long>(m2));
-            last_m1 = m1;
-            last_m2 = m2;
-        }
-
-        sleep_ms(20);
+        // Do nothing forever
+        sleep_ms(1000);
     }
 }
