@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <cstdlib>
 #include <cstdint>
+#include <cstring>
 
 //---------------------Defines------------------//
 // Wheel Diameter
@@ -36,6 +37,7 @@
 
 // PID control settings
 #define KP 30.0f
+#define BASE_SPEED_PERCENT 20
 
 // Signed x4 quadrature counts (every A/B edge is counted).
 volatile int32_t m1_encoder_count = 0;
@@ -52,8 +54,45 @@ static const int8_t QUADRATURE_DELTA[16] = {
      0,  1, -1,  0
 };
 
-//----------------------------------------------------//
+//---------------------Serial communication------------------//
+#define SERIAL_BUFFER_SIZE 32
 
+
+//=====================Functions============================//
+
+//--------------------Serial Communication------------------//
+int clamp_int(int value, int min_value, int max_value) {
+    if (value < min_value) return min_value;
+    if (value > max_value) return max_value;
+    return value;
+}
+
+bool read_serial_line(char *buffer, int buffer_size) {
+    static int index = 0;
+
+    int ch = getchar_timeout_us(0);
+
+    while (ch != PICO_ERROR_TIMEOUT) {
+        if (ch == '\n' || ch == '\r') {
+            if (index > 0) {
+                buffer[index] = '\0';
+                index = 0;
+                return true;
+            }
+        } else {
+            if (index < buffer_size - 1) {
+                buffer[index++] = (char)ch;
+            } else {
+                // Buffer overflow protection
+                index = 0;
+            }
+        }
+
+        ch = getchar_timeout_us(0);
+    }
+
+    return false;
+}
 
 //-------------------Encoder Handling------------------//
 // This reads the two encoder pins and turns them into one number from 0 to 3.
@@ -207,11 +246,8 @@ void drive_with_error(float error, int base_speed) {
     int right_speed = base_speed + correction;
 
     // Clamp speeds to -100 to 100
-    if (left_speed > 100) left_speed = 100;
-    if (left_speed < -100) left_speed = -100;
-
-    if (right_speed > 100) right_speed = 100;
-    if (right_speed < -100) right_speed = -100;
+    left_speed = clamp_int(left_speed, -100, 100);
+    right_speed = clamp_int(right_speed, -100, 100);
 
     // Your motors are mounted opposite directions
     motor1_set_percent(left_speed);
@@ -269,6 +305,19 @@ void run_drive_test() {
     stop_all();
     printf("Drive test complete. Press R to run it again.\n");
 }
+
+// Dummy error values for testing P Control
+const float dummy_errors[] = {
+    0.0f,    // straight
+    0.2f,    // slight correction one way
+    0.5f,    // stronger correction one way
+    0.0f,    // straight again
+    -0.2f,   // slight correction other way
+    -0.5f,   // stronger correction other way
+    0.0f     // straight
+};
+
+const int num_errors = sizeof(dummy_errors) / sizeof(dummy_errors[0]);
 //------------------------Main Loop-------------------------//
 int main() {
     // Initialize stdio for printf debugging (over USB).
@@ -285,33 +334,21 @@ int main() {
     stop_all();
     sleep_ms(3000);
 
-    const float dummy_errors[] = {
-        0.0f,    // straight
-        0.2f,    // slight correction one way
-        0.5f,    // stronger correction one way
-        0.0f,    // straight again
-        -0.2f,   // slight correction other way
-        -0.5f,   // stronger correction other way
-        0.0f     // straight
-    };
+    printf("Pico ready. Send values from -100 to 100.\n");
 
-    const int num_errors = sizeof(dummy_errors) / sizeof(dummy_errors[0]);
+    char line[SERIAL_BUFFER_SIZE];
 
     while (true) {
-        for (int i = 0; i < num_errors; i++) {
-            float error = dummy_errors[i];
+        if (read_serial_line(line, SERIAL_BUFFER_SIZE)) {
+            printf("Received from Pi: %s\n", line);
 
-            printf("Testing dummy error: %.2f\n", error);
+            int value = atoi(line);
+            value = clamp_int(value, -100, 100);
 
-            drive_with_error(error, 30);  // base speed = 30%
-            sleep_ms(2000);
 
-            stop_all();
-            sleep_ms(1000);
+            drive_with_error(value, BASE_SPEED_PERCENT);
         }
 
-        printf("Dummy error test complete. Restarting in 3 seconds...\n");
-        stop_all();
-        sleep_ms(3000);
+        sleep_ms(5);
     }
 }
