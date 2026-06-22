@@ -17,6 +17,14 @@
 #define M2_ENCODER_A 8
 #define M2_ENCODER_B 9
 
+// PWM settings
+#define PWM_WRAP 1000
+#define MIN_PWM 350
+#define MAX_PWM 1000
+#define ENCODER_COUNTS_PER_REV 893
+#define RPM_SAMPLE_MS 500
+#define SAMPLES_PER_LEVEL 8
+
 // Signed x4 quadrature counts (every A/B edge is counted).
 volatile int32_t m1_encoder_count = 0;
 volatile int32_t m2_encoder_count = 0;
@@ -68,10 +76,6 @@ void setup_encoders() {
     gpio_set_irq_enabled(M2_ENCODER_A, edges, true);
     gpio_set_irq_enabled(M2_ENCODER_B, edges, true);
 }
-
-// PWM se#define ENCODER_COUNTS_PER_REV 893
-#define RPM_SAMPLE_MS 500
-#define SAMPLES_PER_LEVEL 8
 
 void setup_pwm_pin(uint pin) {
     gpio_set_function(pin, GPIO_FUNC_PWM);
