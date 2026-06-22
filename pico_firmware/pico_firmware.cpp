@@ -172,13 +172,13 @@ void stop_all() {
 }
 
 void drive_forward(int speed_percent) {
-    motor1_set_percent(speed_percent);
-    motor2_set_percent(-speed_percent);
+    motor1_set_percent(-speed_percent);
+    motor2_set_percent(speed_percent);
 }
 
 void drive_backward(int speed_percent) {
-    motor1_set_percent(-speed_percent);
-    motor2_set_percent(speed_percent);
+    motor1_set_percent(speed_percent);
+    motor2_set_percent(-speed_percent);
 }
 
 void turn_left(int speed_percent) {
@@ -204,6 +204,7 @@ void print_rpm(int motor, int32_t delta_counts) {
            static_cast<long>(rpm_x10 % 10));
 }
 
+// --------------------Motor Keyboard Control------------------//
 void print_keyboard_help() {
     printf("\nKeyboard drive controls\n");
     printf("W = forward    S = backward\n");
@@ -278,6 +279,8 @@ void process_drive_command(int input,
             break;
     }
 }
+//---------------------------------------------------------//
+
 //------------------------Main Loop-------------------------//
 int main() {
     // Initialize stdio for printf debugging (over USB).
