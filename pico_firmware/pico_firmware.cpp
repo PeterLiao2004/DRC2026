@@ -6,6 +6,14 @@
 #include <cstdint>
 
 //---------------------Defines------------------//
+// Wheel Diameter
+#define WHEEL_DIAMETER_MM 65
+#define WHEEL_CIRCUMFERENCE_MM (WHEEL_DIAMETER_MM * 3.14159)
+#define MM_PER_REV WHEEL_CIRCUMFERENCE_MM
+
+// Wheelbase (distance between the two wheels)
+#define WHEELBASE_MM 240
+
 // Motor driver pins
 #define M1A 2
 #define M1B 3
@@ -195,6 +203,44 @@ void print_rpm(int motor, int32_t delta_counts) {
            static_cast<long>(rpm_x10 / 10),
            static_cast<long>(rpm_x10 % 10));
 }
+
+void run_drive_step(const char *name,
+                    void (*movement)(int),
+                    int speed_percent,
+                    uint32_t duration_ms) {
+    int32_t start_m1;
+    int32_t start_m2;
+    read_encoder_counts(start_m1, start_m2);
+
+    printf("%s at %d%%\n", name, speed_percent);
+    movement(speed_percent);
+    sleep_ms(duration_ms);
+    stop_all();
+
+    int32_t end_m1;
+    int32_t end_m2;
+    read_encoder_counts(end_m1, end_m2);
+    printf("Stopped - encoder change: M1 = %ld, M2 = %ld\n",
+           static_cast<long>(end_m1 - start_m1),
+           static_cast<long>(end_m2 - start_m2));
+
+    sleep_ms(1000);
+}
+
+void run_drive_test() {
+    constexpr int TEST_SPEED_PERCENT = 25;
+
+    printf("\nDrive test starting. Keep the area clear.\n");
+    sleep_ms(2000);
+
+    run_drive_step("Forward", drive_forward, TEST_SPEED_PERCENT, 1500);
+    run_drive_step("Backward", drive_backward, TEST_SPEED_PERCENT, 1500);
+    run_drive_step("Turn left", turn_left, TEST_SPEED_PERCENT, 1000);
+    run_drive_step("Turn right", turn_right, TEST_SPEED_PERCENT, 1000);
+
+    stop_all();
+    printf("Drive test complete. Press R to run it again.\n");
+}
 //------------------------Main Loop-------------------------//
 int main() {
     // Initialize stdio for printf debugging (over USB).
@@ -211,8 +257,14 @@ int main() {
     stop_all();
     sleep_ms(3000);
 
+    run_drive_test();
+
     while (true) {
-        // Do nothing forever
-        sleep_ms(1000);
+        int input = getchar_timeout_us(0);
+        if (input == 'r' || input == 'R') {
+            run_drive_test();
+        }
+
+        sleep_ms(20);
     }
 }
