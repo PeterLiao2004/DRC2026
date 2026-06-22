@@ -204,42 +204,79 @@ void print_rpm(int motor, int32_t delta_counts) {
            static_cast<long>(rpm_x10 % 10));
 }
 
-void run_drive_step(const char *name,
-                    void (*movement)(int),
-                    int speed_percent,
-                    uint32_t duration_ms) {
-    int32_t start_m1;
-    int32_t start_m2;
-    read_encoder_counts(start_m1, start_m2);
-
-    printf("%s at %d%%\n", name, speed_percent);
-    movement(speed_percent);
-    sleep_ms(duration_ms);
-    stop_all();
-
-    int32_t end_m1;
-    int32_t end_m2;
-    read_encoder_counts(end_m1, end_m2);
-    printf("Stopped - encoder change: M1 = %ld, M2 = %ld\n",
-           static_cast<long>(end_m1 - start_m1),
-           static_cast<long>(end_m2 - start_m2));
-
-    sleep_ms(1000);
+void print_keyboard_help() {
+    printf("\nKeyboard drive controls\n");
+    printf("W = forward    S = backward\n");
+    printf("A = turn left  D = turn right\n");
+    printf("Space or X = stop\n");
+    printf("+/- = change speed    H = show this help\n");
+    printf("Hold or repeatedly send a direction key to keep moving.\n\n");
 }
 
-void run_drive_test() {
-    constexpr int TEST_SPEED_PERCENT = 25;
+void process_drive_command(int input,
+                           int &speed_percent,
+                           bool &moving,
+                           uint32_t &last_drive_command_ms) {
+    switch (input) {
+        case 'w':
+        case 'W':
+            drive_forward(speed_percent);
+            moving = true;
+            last_drive_command_ms = to_ms_since_boot(get_absolute_time());
+            printf("Forward at %d%%\n", speed_percent);
+            break;
 
-    printf("\nDrive test starting. Keep the area clear.\n");
-    sleep_ms(2000);
+        case 's':
+        case 'S':
+            drive_backward(speed_percent);
+            moving = true;
+            last_drive_command_ms = to_ms_since_boot(get_absolute_time());
+            printf("Backward at %d%%\n", speed_percent);
+            break;
 
-    run_drive_step("Forward", drive_forward, TEST_SPEED_PERCENT, 1500);
-    run_drive_step("Backward", drive_backward, TEST_SPEED_PERCENT, 1500);
-    run_drive_step("Turn left", turn_left, TEST_SPEED_PERCENT, 1000);
-    run_drive_step("Turn right", turn_right, TEST_SPEED_PERCENT, 1000);
+        case 'a':
+        case 'A':
+            turn_left(speed_percent);
+            moving = true;
+            last_drive_command_ms = to_ms_since_boot(get_absolute_time());
+            printf("Left at %d%%\n", speed_percent);
+            break;
 
-    stop_all();
-    printf("Drive test complete. Press R to run it again.\n");
+        case 'd':
+        case 'D':
+            turn_right(speed_percent);
+            moving = true;
+            last_drive_command_ms = to_ms_since_boot(get_absolute_time());
+            printf("Right at %d%%\n", speed_percent);
+            break;
+
+        case ' ':
+        case 'x':
+        case 'X':
+            stop_all();
+            moving = false;
+            printf("Stopped\n");
+            break;
+
+        case '+':
+        case '=':
+            speed_percent += 5;
+            if (speed_percent > 100) speed_percent = 100;
+            printf("Speed set to %d%%\n", speed_percent);
+            break;
+
+        case '-':
+        case '_':
+            speed_percent -= 5;
+            if (speed_percent < 10) speed_percent = 10;
+            printf("Speed set to %d%%\n", speed_percent);
+            break;
+
+        case 'h':
+        case 'H':
+            print_keyboard_help();
+            break;
+    }
 }
 //------------------------Main Loop-------------------------//
 int main() {
@@ -257,12 +294,28 @@ int main() {
     stop_all();
     sleep_ms(3000);
 
-    run_drive_test();
+    constexpr uint32_t DRIVE_TIMEOUT_MS = 750;
+    int speed_percent = 25;
+    bool moving = false;
+    uint32_t last_drive_command_ms = 0;
+
+    print_keyboard_help();
+    printf("Speed set to %d%%\n", speed_percent);
 
     while (true) {
         int input = getchar_timeout_us(0);
-        if (input == 'r' || input == 'R') {
-            run_drive_test();
+        if (input != PICO_ERROR_TIMEOUT) {
+            process_drive_command(input,
+                                  speed_percent,
+                                  moving,
+                                  last_drive_command_ms);
+        }
+
+        uint32_t now_ms = to_ms_since_boot(get_absolute_time());
+        if (moving && (now_ms - last_drive_command_ms >= DRIVE_TIMEOUT_MS)) {
+            stop_all();
+            moving = false;
+            printf("Stopped: command timeout\n");
         }
 
         sleep_ms(20);
