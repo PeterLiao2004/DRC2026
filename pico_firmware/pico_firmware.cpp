@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <cstring>
 
-//---------------------Defines------------------//
+//----------------Hardware Definitions------------------//
 // Wheel Diameter
 #define WHEEL_DIAMETER_MM 65
 #define WHEEL_CIRCUMFERENCE_MM (WHEEL_DIAMETER_MM * 3.14159)
@@ -15,6 +15,7 @@
 // Wheelbase (distance between the two wheels)
 #define WHEELBASE_MM 240
 
+//--------------------GPIO Pin Definitions------------------//
 // Motor driver pins
 #define M1A 2
 #define M1B 3
@@ -27,6 +28,25 @@
 #define M2_ENCODER_A 8
 #define M2_ENCODER_B 9
 
+//Buttons
+#define BUTTON1 10
+#define BUTTON2 11
+
+//LED Pins
+#define LED1 12
+#define LED2 13
+#define LED3 14
+#define LED4 15
+
+//LED Strip Pins
+#define LED_STRIP1 16
+#define LED_STRIP2 17
+
+//Custom Pins (for future use, e.g. sensors)
+#define CUSTOM1 18
+#define CUSTOM2 19
+#define CUSTOM3 20
+//--------------------Control Parameters------------------//
 // PWM settings
 #define PWM_WRAP 1000
 #define MIN_PWM 350
@@ -36,8 +56,8 @@
 #define SAMPLES_PER_LEVEL 8
 
 // PID control settings
-#define KP 0.5f
-#define BASE_SPEED_PERCENT 20
+#define KP 0.2f
+#define BASE_SPEED_PERCENT 30
 
 // Signed x4 quadrature counts (every A/B edge is counted).
 volatile int32_t m1_encoder_count = 0;
