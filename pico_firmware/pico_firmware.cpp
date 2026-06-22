@@ -172,25 +172,25 @@ void stop_all() {
 }
 
 void drive_forward(int speed_percent) {
-    motor1_set_percent(-speed_percent);
+    motor1_set_percent(speed_percent);
     motor2_set_percent(speed_percent);
 }
 
 void drive_backward(int speed_percent) {
-    motor1_set_percent(speed_percent);
+    motor1_set_percent(-speed_percent);
     motor2_set_percent(-speed_percent);
 }
 
 void turn_left(int speed_percent) {
     // Left turn: one motor backwards, one motor forwards
     motor1_set_percent(-speed_percent);
-    motor2_set_percent(-speed_percent);
+    motor2_set_percent(speed_percent);
 }
 
 void turn_right(int speed_percent) {
     // Right turn: one motor forwards, one motor backwards
     motor1_set_percent(speed_percent);
-    motor2_set_percent(speed_percent);
+    motor2_set_percent(-speed_percent);
 }
 
 //------------------------Testing/Helpers -------------------------//
