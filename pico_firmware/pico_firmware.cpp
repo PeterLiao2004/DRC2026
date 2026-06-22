@@ -92,6 +92,13 @@ void read_encoder_counts(int32_t &m1, int32_t &m2) {
     restore_interrupts(irq_state);
 }
 
+void reset_encoder_counts() {
+    uint32_t irq_state = save_and_disable_interrupts();
+    m1_encoder_count = 0;
+    m2_encoder_count = 0;
+    restore_interrupts(irq_state);
+}
+
 // Converts change in encoder counts over a sample period to RPM x10 (to avoid floating-point).
 int32_t counts_to_rpm_x10(int32_t delta_counts, uint32_t sample_ms) {
     // RPM x10 avoids relying on floating-point printf support.
@@ -211,8 +218,34 @@ int main() {
     stop_all();
     sleep_ms(3000);
 
+    reset_encoder_counts();
+    int32_t last_m1 = 0;
+    int32_t last_m2 = 0;
+
+    printf("\nManual encoder test\n");
+    printf("Rotate either wheel by hand. Press R to reset the counts.\n");
+
     while (true) {
-        // Do nothing forever
-        sleep_ms(1000);
+        int input = getchar_timeout_us(0);
+        if (input == 'r' || input == 'R') {
+            reset_encoder_counts();
+            last_m1 = 0;
+            last_m2 = 0;
+            printf("Counts reset: M1 = 0, M2 = 0\n");
+        }
+
+        int32_t m1;
+        int32_t m2;
+        read_encoder_counts(m1, m2);
+
+        if (m1 != last_m1 || m2 != last_m2) {
+            printf("M1: %ld\tM2: %ld\n",
+                   static_cast<long>(m1),
+                   static_cast<long>(m2));
+            last_m1 = m1;
+            last_m2 = m2;
+        }
+
+        sleep_ms(20);
     }
 }
