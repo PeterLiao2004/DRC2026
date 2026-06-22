@@ -36,7 +36,7 @@
 #define SAMPLES_PER_LEVEL 8
 
 // PID control settings
-#define KP 30.0f
+#define KP 0.5f
 #define BASE_SPEED_PERCENT 20
 
 // Signed x4 quadrature counts (every A/B edge is counted).
