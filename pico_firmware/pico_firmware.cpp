@@ -172,13 +172,13 @@ void stop_all() {
 }
 
 void drive_forward(int speed_percent) {
-    motor1_set_percent(speed_percent);
-    motor2_set_percent(-speed_percent);
+    motor1_set_percent(-speed_percent);
+    motor2_set_percent(speed_percent);
 }
 
 void drive_backward(int speed_percent) {
-    motor1_set_percent(-speed_percent);
-    motor2_set_percent(speed_percent);
+    motor1_set_percent(speed_percent);
+    motor2_set_percent(-speed_percent);
 }
 
 void turn_left(int speed_percent) {
