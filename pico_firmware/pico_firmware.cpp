@@ -34,6 +34,9 @@
 #define RPM_SAMPLE_MS 500
 #define SAMPLES_PER_LEVEL 8
 
+// PID control settings
+#define KP 30.0f
+
 // Signed x4 quadrature counts (every A/B edge is counted).
 volatile int32_t m1_encoder_count = 0;
 volatile int32_t m2_encoder_count = 0;
@@ -193,6 +196,31 @@ void turn_right(int speed_percent) {
     motor2_set_percent(-speed_percent);
 }
 
+//-------------------PID Control ---------------------------------//
+// This is a simple proportional controller that adjusts motor speeds based on an error value.
+void drive_with_error(float error, int base_speed) {
+    float Kp = KP;  // steering strength, tune this later
+
+    int correction = static_cast<int>(Kp * error);
+
+    int left_speed = base_speed - correction;
+    int right_speed = base_speed + correction;
+
+    // Clamp speeds to -100 to 100
+    if (left_speed > 100) left_speed = 100;
+    if (left_speed < -100) left_speed = -100;
+
+    if (right_speed > 100) right_speed = 100;
+    if (right_speed < -100) right_speed = -100;
+
+    // Your motors are mounted opposite directions
+    motor1_set_percent(left_speed);
+    motor2_set_percent(right_speed);
+
+    printf("error: %.2f, base: %d, left: %d, right: %d\n",
+           error, base_speed, left_speed, right_speed);
+}
+
 //------------------------Testing/Helpers -------------------------//
 // Helper function to print RPM in a human-friendly format.
 void print_rpm(int motor, int32_t delta_counts) {
@@ -257,14 +285,33 @@ int main() {
     stop_all();
     sleep_ms(3000);
 
-    run_drive_test();
+    const float dummy_errors[] = {
+        0.0f,    // straight
+        0.2f,    // slight correction one way
+        0.5f,    // stronger correction one way
+        0.0f,    // straight again
+        -0.2f,   // slight correction other way
+        -0.5f,   // stronger correction other way
+        0.0f     // straight
+    };
+
+    const int num_errors = sizeof(dummy_errors) / sizeof(dummy_errors[0]);
 
     while (true) {
-        int input = getchar_timeout_us(0);
-        if (input == 'r' || input == 'R') {
-            run_drive_test();
+        for (int i = 0; i < num_errors; i++) {
+            float error = dummy_errors[i];
+
+            printf("Testing dummy error: %.2f\n", error);
+
+            drive_with_error(error, 30);  // base speed = 30%
+            sleep_ms(2000);
+
+            stop_all();
+            sleep_ms(1000);
         }
 
-        sleep_ms(20);
+        printf("Dummy error test complete. Restarting in 3 seconds...\n");
+        stop_all();
+        sleep_ms(3000);
     }
 }
