@@ -37,6 +37,7 @@
 #define LED2 13
 #define LED3 14
 #define LED4 15
+#define STATUS_LED_PIN PICO_DEFAULT_LED_PIN
 
 //LED Strip Pins
 #define LED_STRIP1 16
@@ -56,7 +57,7 @@
 #define SAMPLES_PER_LEVEL 8
 
 // PID control settings
-#define KP 0.2f
+#define KP 0.5f
 #define BASE_SPEED_PERCENT 30
 
 // Signed x4 quadrature counts (every A/B edge is counted).
@@ -79,6 +80,59 @@ static const int8_t QUADRATURE_DELTA[16] = {
 
 
 //=====================Functions============================//
+//--------------------Setup/Initialization------------------//
+// Forward declarations for the hardware-specific setup functions below.
+void setup_pwm_pin(uint pin);
+void setup_encoders();
+void stop_all();
+
+void setup_gpio() {
+    // Motor driver outputs use the PWM peripheral.
+    const uint motor_pins[] = {M1A, M1B, M2A, M2B};
+    for (uint pin : motor_pins) {
+        setup_pwm_pin(pin);
+    }
+
+    // Encoder inputs and their edge interrupts.
+    setup_encoders();
+
+    // Buttons are active-low: pressed reads 0, released reads 1.
+    const uint button_pins[] = {BUTTON1, BUTTON2};
+    for (uint pin : button_pins) {
+        gpio_init(pin);
+        gpio_set_dir(pin, GPIO_IN);
+        gpio_pull_up(pin);
+    }
+
+    // Status LEDs start switched off.
+    const uint led_pins[] = {LED1, LED2, LED3, LED4, STATUS_LED_PIN};
+    for (uint pin : led_pins) {
+        gpio_init(pin);
+        gpio_set_dir(pin, GPIO_OUT);
+        gpio_put(pin, false);
+    }
+
+    // Hold the LED-strip data pins low until strip control is implemented.
+    const uint led_strip_pins[] = {LED_STRIP1, LED_STRIP2};
+    for (uint pin : led_strip_pins) {
+        gpio_init(pin);
+        gpio_set_dir(pin, GPIO_OUT);
+        gpio_put(pin, false);
+    }
+
+    // Leave future-use pins as high-impedance inputs.
+    const uint custom_pins[] = {CUSTOM1, CUSTOM2, CUSTOM3};
+    for (uint pin : custom_pins) {
+        gpio_init(pin);
+        gpio_set_dir(pin, GPIO_IN);
+        gpio_disable_pulls(pin);
+    }
+
+    // Ensure the robot cannot move as initialization completes.
+    stop_all();
+}
+
+
 
 //--------------------Serial Communication------------------//
 int clamp_int(int value, int min_value, int max_value) {
@@ -257,7 +311,7 @@ void turn_right(int speed_percent) {
 
 //-------------------PID Control ---------------------------------//
 // This is a simple proportional controller that adjusts motor speeds based on an error value.
-void drive_with_error(float error, int base_speed) {
+void pid_drive(float error, int base_speed) {
     float Kp = KP;  // steering strength, tune this later
 
     int correction = static_cast<int>(Kp * error);
@@ -343,15 +397,8 @@ int main() {
     // Initialize stdio for printf debugging (over USB).
     stdio_init_all();
 
-    // Set up PWM pins and encoder GPIOs with interrupts.
-    setup_pwm_pin(M1A);
-    setup_pwm_pin(M1B);
-    setup_pwm_pin(M2A);
-    setup_pwm_pin(M2B);
-    setup_encoders();
-
-    // Initialize all motors to stopped
-    stop_all();
+    // Configure every GPIO and leave all outputs in a safe state.
+    setup_gpio();
     sleep_ms(3000);
 
     printf("Pico ready. Send values from -100 to 100.\n");
@@ -366,7 +413,7 @@ int main() {
             value = clamp_int(value, -100, 100);
 
 
-            drive_with_error(value, BASE_SPEED_PERCENT);
+            pid_drive(value, BASE_SPEED_PERCENT);
         }
 
         sleep_ms(5);
