@@ -72,6 +72,11 @@ while True:
     if k == ord('q') or k == 27:
         break
 
+# Print final HSV values
+print("Lower:", [hmin, smin, vmin])
+print("Upper:", [hmax, smax, vmax])
+
+
 # Release resources
 cv2.destroyAllWindows()
 picam2.stop()
