@@ -380,6 +380,80 @@ void run_drive_test() {
     printf("Drive test complete. Press R to run it again.\n");
 }
 
+void set_all_leds(bool on) {
+    const uint led_pins[] = {LED1, LED2, LED3, LED4, STATUS_LED_PIN};
+    for (uint pin : led_pins) {
+        gpio_put(pin, on);
+    }
+}
+
+void run_led_test() {
+    const uint led_pins[] = {LED1, LED2, LED3, LED4, STATUS_LED_PIN};
+
+    printf("\nLED test: each LED should light in sequence.\n");
+    set_all_leds(false);
+
+    for (uint pin : led_pins) {
+        gpio_put(pin, true);
+        sleep_ms(400);
+        gpio_put(pin, false);
+    }
+
+    printf("LED test: all LEDs on.\n");
+    set_all_leds(true);
+    sleep_ms(1000);
+    set_all_leds(false);
+    printf("LED test complete.\n");
+}
+
+void run_button_test() {
+    constexpr uint32_t BUTTON_TEST_MS = 10000;
+    uint32_t start_ms = to_ms_since_boot(get_absolute_time());
+    bool previous_button1 = false;
+    bool previous_button2 = false;
+
+    printf("\nButton test: press BUTTON1 and BUTTON2 within 10 seconds.\n");
+    printf("LED1 follows BUTTON1; LED2 follows BUTTON2.\n");
+
+    while (to_ms_since_boot(get_absolute_time()) - start_ms < BUTTON_TEST_MS) {
+        bool button1_pressed = gpio_get(BUTTON1) == 0;
+        bool button2_pressed = gpio_get(BUTTON2) == 0;
+
+        gpio_put(LED1, button1_pressed);
+        gpio_put(LED2, button2_pressed);
+
+        if (button1_pressed != previous_button1) {
+            printf("BUTTON1 %s\n", button1_pressed ? "pressed" : "released");
+            previous_button1 = button1_pressed;
+        }
+
+        if (button2_pressed != previous_button2) {
+            printf("BUTTON2 %s\n", button2_pressed ? "pressed" : "released");
+            previous_button2 = button2_pressed;
+        }
+
+        sleep_ms(20);
+    }
+
+    gpio_put(LED1, false);
+    gpio_put(LED2, false);
+    printf("Button test complete.\n");
+}
+
+void run_hardware_test() {
+    printf("\n=== Hardware self-test ===\n");
+    run_led_test();
+    run_button_test();
+
+    printf("\nMotor test is next. Keep the wheels raised and area clear.\n");
+    sleep_ms(3000);
+    run_drive_test();
+
+    set_all_leds(false);
+    gpio_put(STATUS_LED_PIN, true);
+    printf("=== Hardware self-test complete ===\n\n");
+}
+
 // Dummy error values for testing P Control
 const float dummy_errors[] = {
     0.0f,    // straight
@@ -400,6 +474,10 @@ int main() {
     // Configure every GPIO and leave all outputs in a safe state.
     setup_gpio();
     sleep_ms(3000);
+
+    // Testing code
+    run_led_test();
+    //run_hardware_test();
 
     printf("Pico ready. Send values from -100 to 100.\n");
 
