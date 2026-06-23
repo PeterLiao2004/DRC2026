@@ -7,12 +7,13 @@ BAUD = 115200
 ser = serial.Serial(PORT, BAUD, timeout=1)
 time.sleep(2)
 
-numbers = [-1000, -750, -100, -10, -6, 0, 25, 50, 75, 100, 300, 500, 750, 1000]
+numbers = [-100, -75, -10, -8, -2, 0, 2, 5, 7, 10, 30, 50, 75, 100]
 
 for n in numbers:
     msg = f"{n}\n"
     ser.write(msg.encode("utf-8"))
+    print(f"Sent: {n}")
 
-    time.sleep(0.5)
+    time.sleep(2)
 
 ser.close()
