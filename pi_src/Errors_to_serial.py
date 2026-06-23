@@ -49,13 +49,21 @@ YELLOW_UPPER = np.array([29, 255, 182])
 BLUE_LOWER = np.array([97, 23, 11])
 BLUE_UPPER = np.array([179, 177, 115])
 
+# Green line, start/stop
+GREEN_LOWER = np.array([40, 50, 50])
+GREEN_UPPER = np.array([80, 255, 255])
+
+# Black arrow, for turning
+ARROW_LOWER = np.array([11, 110, 63])
+ARROW_UPPER = np.array([21, 173, 79])
+
 # -----------------------------
 # Line detection settings
 # -----------------------------
 
 LOOKAHEAD_Y = int(FRAME_H * 0.55)   # where to look for the lines
 BAND_HEIGHT = 80                    # thickness of horizontal band
-MIN_PIXELS = 50                     # minimum pixels needed to trust a line
+MIN_PIXELS_LINE = 50                     # minimum pixels needed to trust a line
 
 last_error = 0.0
 last_lane_width = None
@@ -67,6 +75,18 @@ base_speed = 30  # Base speed to send to microcontroller (0-100)
 # -----------------------------
 prev_time = time.time()
 fps = 0.0
+
+def mask_and_clean(hsv, lower, upper, kernel_size=5):
+    """
+    Creates a binary mask for the given HSV range and applies morphological opening to clean it.
+    """
+
+    mask = cv2.inRange(hsv, lower, upper)
+
+    kernel = np.ones((kernel_size, kernel_size), np.uint8)
+    cleaned_mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+
+    return cleaned_mask
 
 
 def get_line_x(mask, y, band_height):
@@ -81,7 +101,7 @@ def get_line_x(mask, y, band_height):
     band = mask[y1:y2, :]
     ys, xs = np.where(band > 0)
 
-    if len(xs) < MIN_PIXELS:
+    if len(xs) < MIN_PIXELS_LINE:
         return None
 
     return int(np.median(xs))
@@ -104,13 +124,8 @@ try:
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
         # Threshold each line colour
-        yellow_mask = cv2.inRange(hsv, YELLOW_LOWER, YELLOW_UPPER)
-        blue_mask = cv2.inRange(hsv, BLUE_LOWER, BLUE_UPPER)
-
-        # Clean up small noise
-        kernel = np.ones((5, 5), np.uint8)
-        yellow_mask = cv2.morphologyEx(yellow_mask, cv2.MORPH_OPEN, kernel)
-        blue_mask = cv2.morphologyEx(blue_mask, cv2.MORPH_OPEN, kernel)
+        yellow_mask = mask_and_clean(hsv, YELLOW_LOWER, YELLOW_UPPER)
+        blue_mask = mask_and_clean(hsv, BLUE_LOWER, BLUE_UPPER)
 
         # Find x position of each line at the lookahead row
         yellow_x = get_line_x(yellow_mask, LOOKAHEAD_Y, BAND_HEIGHT)
