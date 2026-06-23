@@ -29,11 +29,12 @@ config = picam2.create_video_configuration(
 
 picam2.configure(config)
 
-picam2.set_controls({
-    "ExposureTime": 13000,
-    "AnalogueGain": 2.8,
-    "ColourGains": (2.1, 1.6)
-})
+# picam2.set_controls({
+#     "ExposureTime": 13000,
+#     "AnalogueGain": 2.8,
+#     "ColourGains": (2.1, 1.6)
+# })
+picam2.set_controls({"ExposureTime": 9000, "AnalogueGain": 2.0, "ColourGains": (2.1, 1.9)})
 
 picam2.start()
 
@@ -41,24 +42,37 @@ picam2.start()
 # HSV thresholds
 # -----------------------------
 
-# Yellow line, left side
-YELLOW_LOWER = np.array([19, 176, 108])
-YELLOW_UPPER = np.array([29, 255, 182])
+# SOFIA HOUSE:
+# # Yellow line, left side
+# YELLOW_LOWER = np.array([19, 176, 108])
+# YELLOW_UPPER = np.array([29, 255, 182])
 
-# Blue line, right side
-# BLUE_LOWER = np.array([97, 23, 11])
-# BLUE_UPPER = np.array([179, 177, 115])
+# BLUE_LOWER = np.array([0, 0, 0])
+# BLUE_UPPER = np.array([171, 206, 70])
 
-BLUE_LOWER = np.array([0, 0, 0])
-BLUE_UPPER = np.array([171, 206, 70])
+# # Arrow thresholds from your arrow detection code
+# ARROW_LOWER = np.array([10, 97, 15])
+# ARROW_UPPER = np.array([31, 172, 120])
 
-# Arrow thresholds from your arrow detection code
-ARROW_LOWER = np.array([10, 97, 15])
-ARROW_UPPER = np.array([31, 172, 120])
+# # Green Line, start/stop
+# GREEN_LOWER = np.array([19, 134, 19])
+# GREEN_UPPER = np.array([59, 209, 104])
 
-# Green Line, start/stop
-GREEN_LOWER = np.array([19, 134, 19])
-GREEN_UPPER = np.array([59, 209, 104])
+# UNI TRACK:
+YELLOW_LOWER = np.array([24, 41, 168])
+YELLOW_UPPER = np.array([32, 167, 255])
+
+BLUE_LOWER = np.array([97, 61, 164])
+BLUE_UPPER = np.array([115, 235, 255])
+
+GREEN_LOWER = np.array([41, 28, 183])
+GREEN_UPPER = np.array([84, 129, 255])
+
+PURPLE_LOWER = np.array([155, 73, 70])
+PURPLE_UPPER = np.array([179, 173, 166])
+
+ARROW_LOWER = np.array([27, 0, 42])
+ARROW_UPPER = np.array([107, 48, 162])
 
 # -----------------------------
 # Line following settings
@@ -72,7 +86,12 @@ last_lane_width = None
 
 current_speed = 35
 base_speed = 35
+arrow_confirming_speed = 15
 arrow_speed = 25
+
+Kp = 0.2
+Ki = 0
+Kd = 0.1
 
 green_seen_start_time = None
 GREEN_STOP_DELAY = 2.3
@@ -108,10 +127,10 @@ MIN_ASPECT_RATIO = 0.5
 MAX_ASPECT_RATIO = 4.0
 
 # Arrow bias timing
-ARROW_WAIT_TIME = 5
-ARROW_STRONG_TIME = 0
-ARROW_MODERATE_TIME = 0.3
-ARROW_WEAK_TIME = 1.8
+ARROW_WAIT_TIME = 3
+ARROW_STRONG_TIME = 0.5
+ARROW_MODERATE_TIME = 1.1
+ARROW_WEAK_TIME = 0.5
 
 # Arrow bias strength
 # These values are normalised error values.
@@ -125,13 +144,21 @@ ARROW_WEAK_BIAS = 0.15
 # If the robot turns the wrong way, change this to -1.
 ARROW_RIGHT_SIGN = 1
 
-# Require a direction to appear a couple of times recently before triggering
-recent_arrow_directions = deque(maxlen=6)
-ARROW_HITS_TO_TRIGGER = 2
+# Arrow confirmation system
+ARROW_CONFIRM_FRAMES = 5          # same direction must be seen this many frames
+ARROW_CONFIRM_TIMEOUT = 1.0       # cancel confirmation if it takes too long
+ARROW_LOST_TIMEOUT = 0.25         # allow brief missed frames while confirming
 
 # Prevent the same arrow from instantly retriggering
 ARROW_COOLDOWN_TIME = 1.0
 
+# Pending arrow confirmation state
+pending_arrow_direction = None
+pending_arrow_count = 0
+pending_arrow_start_time = None
+last_pending_arrow_seen_time = None
+
+# Confirmed arrow bias state
 arrow_bias_start_time = None
 arrow_bias_direction = None
 last_arrow_trigger_time = -999.0
@@ -301,35 +328,9 @@ def detect_arrow_direction(contour):
         return "LEFT"
 
 
-def get_stable_arrow_direction(raw_direction):
-    """
-    Uses a small history so the arrow does not need to be detected
-    perfectly every frame while the robot is moving.
-    """
-
-    if raw_direction == "LEFT" or raw_direction == "RIGHT":
-        recent_arrow_directions.append(raw_direction)
-    else:
-        recent_arrow_directions.append("NONE")
-
-    left_hits = recent_arrow_directions.count("LEFT")
-    right_hits = recent_arrow_directions.count("RIGHT")
-
-    if left_hits >= ARROW_HITS_TO_TRIGGER and left_hits > right_hits:
-        return "LEFT"
-
-    if right_hits >= ARROW_HITS_TO_TRIGGER and right_hits > left_hits:
-        return "RIGHT"
-
-    return "NOT_ARROW"
-
-
 def get_arrow_bias(current_time):
     """
-    Returns the current arrow bias based on how long ago the arrow was triggered.
-    First 0.5 s: strong
-    Next 0.5 s: moderate
-    Next 0.5 s: weak
+    Returns the current arrow bias after an arrow has been confirmed.
     """
 
     global arrow_bias_start_time
@@ -343,7 +344,7 @@ def get_arrow_bias(current_time):
     if elapsed < ARROW_WAIT_TIME:
         bias_strength = ARROW_WAIT_BIAS
 
-    if elapsed < ARROW_WAIT_TIME + ARROW_STRONG_TIME:
+    elif elapsed < ARROW_WAIT_TIME + ARROW_STRONG_TIME:
         bias_strength = ARROW_STRONG_BIAS
 
     elif elapsed < ARROW_WAIT_TIME + ARROW_STRONG_TIME + ARROW_MODERATE_TIME:
@@ -404,11 +405,114 @@ def detect_green_finish_line(green_mask):
 
     return False, (x, y, w, h)
 
+def update_arrow_confirmation(raw_direction, current_time):
+    """
+    First slows down when an arrow candidate is seen.
+    Only confirms the arrow if the same direction is detected for several frames.
+    """
+
+    global pending_arrow_direction
+    global pending_arrow_count
+    global pending_arrow_start_time
+    global last_pending_arrow_seen_time
+
+    global arrow_bias_start_time
+    global arrow_bias_direction
+    global last_arrow_trigger_time
+
+    arrow_confirmed_now = False
+
+    # If arrow bias is already active, do not start confirming another arrow
+    if arrow_bias_start_time is not None:
+        return False, False
+
+    # Cooldown after a confirmed arrow
+    if current_time - last_arrow_trigger_time < ARROW_COOLDOWN_TIME:
+        return False, False
+
+    valid_direction = raw_direction == "LEFT" or raw_direction == "RIGHT"
+
+    # No arrow seen this frame
+    if not valid_direction:
+        if pending_arrow_start_time is not None:
+            lost_time = current_time - last_pending_arrow_seen_time
+
+            # Cancel if it has been missing for too long
+            if lost_time > ARROW_LOST_TIMEOUT:
+                pending_arrow_direction = None
+                pending_arrow_count = 0
+                pending_arrow_start_time = None
+                last_pending_arrow_seen_time = None
+
+        return False, pending_arrow_start_time is not None
+
+    # First arrow candidate seen
+    if pending_arrow_direction is None:
+        pending_arrow_direction = raw_direction
+        pending_arrow_count = 1
+        pending_arrow_start_time = current_time
+        last_pending_arrow_seen_time = current_time
+
+        print("Arrow candidate:", raw_direction)
+
+        # True means slow down while confirming
+        return False, True
+
+    # Same direction seen again
+    if raw_direction == pending_arrow_direction:
+        pending_arrow_count += 1
+        last_pending_arrow_seen_time = current_time
+
+        print("Arrow confirming:", pending_arrow_direction, pending_arrow_count)
+
+    # Different direction seen, restart confirmation
+    else:
+        pending_arrow_direction = raw_direction
+        pending_arrow_count = 1
+        pending_arrow_start_time = current_time
+        last_pending_arrow_seen_time = current_time
+
+        print("Arrow direction changed, restarting:", raw_direction)
+
+        return False, True
+
+    # Cancel if confirmation takes too long
+    if current_time - pending_arrow_start_time > ARROW_CONFIRM_TIMEOUT:
+        print("Arrow confirmation timed out")
+
+        pending_arrow_direction = None
+        pending_arrow_count = 0
+        pending_arrow_start_time = None
+        last_pending_arrow_seen_time = None
+
+        return False, False
+
+    # Confirm arrow after enough same-direction frames
+    if pending_arrow_count >= ARROW_CONFIRM_FRAMES:
+        arrow_bias_start_time = current_time
+        arrow_bias_direction = pending_arrow_direction
+        last_arrow_trigger_time = current_time
+
+        print("Arrow confirmed:", arrow_bias_direction)
+
+        pending_arrow_direction = None
+        pending_arrow_count = 0
+        pending_arrow_start_time = None
+        last_pending_arrow_seen_time = None
+
+        arrow_confirmed_now = True
+
+    return arrow_confirmed_now, pending_arrow_start_time is not None
+
 # ============================================================
 # Main loop
 # ============================================================
 
 try:
+    # Send PID settings to Pico
+    msg = f"PID,{Kp},{Ki},{Kd}\n"
+    ser.write(msg.encode("utf-8"))
+
     while True:
         frame = picam2.capture_array()
 
@@ -488,22 +592,11 @@ try:
         arrow_mask = get_arrow_mask(hsv, blue_mask)
         arrow_contour = find_largest_arrow_contour(arrow_mask)
         raw_arrow_direction = detect_arrow_direction(arrow_contour)
-        stable_arrow_direction = get_stable_arrow_direction(raw_arrow_direction)
 
-        # Trigger arrow bias only if:
-        # - a stable arrow was seen
-        # - no arrow bias is currently active
-        # - cooldown has passed
-        if stable_arrow_direction != "NOT_ARROW":
-            cooldown_done = current_time - last_arrow_trigger_time > ARROW_COOLDOWN_TIME
-
-            if arrow_bias_start_time is None and cooldown_done:
-                arrow_bias_start_time = current_time
-                arrow_bias_direction = stable_arrow_direction
-                last_arrow_trigger_time = current_time
-                recent_arrow_directions.clear()
-
-                print("Arrow triggered:", stable_arrow_direction)
+        arrow_confirmed_now, arrow_confirming = update_arrow_confirmation(
+            raw_arrow_direction,
+            current_time
+        )
 
         arrow_bias = get_arrow_bias(current_time)
 
@@ -514,8 +607,10 @@ try:
         error_int = int(final_error * 100)
         error_int = max(-100, min(100, error_int))
 
-        # Slow down while arrow bias is active
-        if arrow_bias != 0:
+        # Slow down while checking or executing an arrow
+        if arrow_confirming:
+            current_speed = arrow_confirming_speed
+        elif arrow_bias != 0:
             current_speed = arrow_speed
         else:
             current_speed = base_speed
@@ -569,6 +664,14 @@ try:
         cv2.putText(display, f"Raw arrow: {raw_arrow_direction}", (20, 120),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8,
                     (0, 255, 0) if raw_arrow_direction != "NOT_ARROW" else (0, 0, 255), 2)
+
+        cv2.putText(display, f"Confirming: {arrow_confirming}", (20, 240),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8,
+                    (0, 255, 0) if arrow_confirming else (0, 0, 255), 2)
+
+        cv2.putText(display, f"Confirm count: {pending_arrow_count}", (20, 280),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8,
+                    (0, 255, 0), 2)
 
         cv2.putText(display, f"Bias: {int(arrow_bias * 100)}", (20, 160),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
