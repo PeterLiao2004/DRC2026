@@ -304,29 +304,49 @@ void motor2_set_percent(int speed_percent) {
 }
 //-------------------High-Level Motor Control-----------------//
 
+void set_turn_indicators(bool left_on, bool right_on) {
+    set_led(LED1, left_on);
+    set_led(LED4, right_on);
+}
+
+void set_motion_indicators(bool forward_on, bool reverse_on) {
+    set_led(LED2, forward_on);
+    set_led(LED3, reverse_on);
+}
+
 void stop_all() {
     motor1_set_percent(0);
     motor2_set_percent(0);
+    set_turn_indicators(false, false);
+    set_motion_indicators(false, false);
 }
 
 void drive_forward(int speed_percent) {
+    set_turn_indicators(false, false);
+    set_motion_indicators(true, false);
     motor1_set_percent(speed_percent);
     motor2_set_percent(speed_percent);
 }
 
 void drive_backward(int speed_percent) {
+    set_turn_indicators(false, false);
+    set_motion_indicators(false, true);
     motor1_set_percent(-speed_percent);
     motor2_set_percent(-speed_percent);
 }
 
 void turn_left(int speed_percent) {
     // Left turn: one motor backwards, one motor forwards
+    set_turn_indicators(true, false);
+    set_motion_indicators(false, false);
     motor1_set_percent(-speed_percent);
     motor2_set_percent(speed_percent);
 }
 
 void turn_right(int speed_percent) {
     // Right turn: one motor forwards, one motor backwards
+    set_turn_indicators(false, true);
+    set_motion_indicators(false, false);
     motor1_set_percent(speed_percent);
     motor2_set_percent(-speed_percent);
 }
@@ -344,6 +364,22 @@ void pid_drive(float error, int base_speed) {
     // Clamp speeds to -100 to 100
     left_speed = clamp_int(left_speed, -100, 100);
     right_speed = clamp_int(right_speed, -100, 100);
+
+    if (correction > 0) {
+        set_turn_indicators(true, false);
+    } else if (correction < 0) {
+        set_turn_indicators(false, true);
+    } else {
+        set_turn_indicators(false, false);
+    }
+
+    if (base_speed > 0) {
+        set_motion_indicators(true, false);
+    } else if (base_speed < 0) {
+        set_motion_indicators(false, true);
+    } else {
+        set_motion_indicators(false, false);
+    }
 
     // Your motors are mounted opposite directions
     motor1_set_percent(left_speed);
@@ -396,9 +432,9 @@ void run_drive_test() {
     printf("\nDrive test starting. Keep the area clear.\n");
     sleep_ms(2000);
 
-    run_drive_step("Forward", drive_forward, TEST_SPEED_PERCENT, LED1, 1500);
-    run_drive_step("Backward", drive_backward, TEST_SPEED_PERCENT, LED2, 1500);
-    run_drive_step("Turn left", turn_left, TEST_SPEED_PERCENT, LED3, 1000);
+    run_drive_step("Forward", drive_forward, TEST_SPEED_PERCENT, LED2, 1500);
+    run_drive_step("Backward", drive_backward, TEST_SPEED_PERCENT, LED3, 1500);
+    run_drive_step("Turn left", turn_left, TEST_SPEED_PERCENT, LED1, 1000);
     run_drive_step("Turn right", turn_right, TEST_SPEED_PERCENT, LED4, 1000);
 
     stop_all();
@@ -481,16 +517,35 @@ void run_hardware_test() {
 
 // Dummy error values for testing P Control
 const float dummy_errors[] = {
-    0.0f,    // straight
-    0.2f,    // slight correction one way
-    0.5f,    // stronger correction one way
-    0.0f,    // straight again
-    -0.2f,   // slight correction other way
-    -0.5f,   // stronger correction other way
-    0.0f     // straight
+    0.0f,     // straight
+    20.0f,    // slight correction left
+    50.0f,    // stronger correction left
+    0.0f,     // straight again
+    -20.0f,   // slight correction right
+    -50.0f,   // stronger correction right
+    0.0f      // straight
 };
 
 const int num_errors = sizeof(dummy_errors) / sizeof(dummy_errors[0]);
+
+void run_dummy_pid_test() {
+    printf("\nDummy P-control test starting. Keep the wheels raised.\n");
+    sleep_ms(2000);
+
+    for (int i = 0; i < num_errors; ++i) {
+        float error = dummy_errors[i];
+        printf("Dummy error: %.1f\n", error);
+
+        pid_drive(error, BASE_SPEED_PERCENT);
+        sleep_ms(1500);
+
+        stop_all();
+        sleep_ms(500);
+    }
+
+    stop_all();
+    printf("Dummy P-control test complete.\n");
+}
 //------------------------Main Loop-------------------------//
 int main() {
     // Initialize stdio for printf debugging (over USB).
@@ -500,9 +555,12 @@ int main() {
     setup_gpio();
     sleep_ms(3000);
 
-    // Testing code
+    // ----------------Testing code--------------------//
     //run_led_test();
-    run_hardware_test();
+    //run_button_test();
+    //run_hardware_test();
+    run_dummy_pid_test();
+    //--------------------------------------------------//
 
     printf("Pico ready. Send values from -100 to 100.\n");
 
