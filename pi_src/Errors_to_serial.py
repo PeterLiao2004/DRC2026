@@ -54,8 +54,8 @@ GREEN_LOWER = np.array([40, 50, 50])
 GREEN_UPPER = np.array([80, 255, 255])
 
 # Black arrow, for turning
-ARROW_LOWER = np.array([11, 110, 63])
-ARROW_UPPER = np.array([21, 173, 79])
+ARROW_LOWER = np.array([12, 105, 35])
+ARROW_UPPER = np.array([19, 170, 96])
 
 # -----------------------------
 # Line detection settings
@@ -68,7 +68,7 @@ MIN_PIXELS_LINE = 50                     # minimum pixels needed to trust a line
 last_error = 0.0
 last_lane_width = None
 
-base_speed = 30  # Base speed to send to microcontroller (0-100)
+base_speed = 40  # Base speed to send to microcontroller (0-100)
 
 # -----------------------------
 # FPS settings
@@ -166,6 +166,7 @@ try:
 
         # This is the value to send to the microcontroller
         error_int = int(error * 100)
+        error_int = max(-100, min(100, error_int))  # Clamp to -100 to 100
 
         # Send to microcontroller over serial
         msg = f"D,{error_int},{base_speed}\n"
@@ -237,5 +238,8 @@ try:
             break
 
 finally:
+    msg = f"D,{0},{0}\n"
+    ser.write(msg.encode("utf-8")) # Send stop command to microcontroller
+    ser.close()
     cv2.destroyAllWindows()
     picam2.stop()
