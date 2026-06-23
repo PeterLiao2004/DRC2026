@@ -546,6 +546,93 @@ void run_dummy_pid_test() {
     stop_all();
     printf("Dummy P-control test complete.\n");
 }
+
+void run_keyboard_pid_control() {
+    constexpr float STEERING_ERROR = 40.0f;
+    constexpr uint32_t COMMAND_TIMEOUT_MS = 1000;
+
+    int base_speed = BASE_SPEED_PERCENT;
+    bool moving = false;
+    uint32_t last_command_ms = 0;
+
+    stop_all();
+    printf("\nKeyboard PID control\n");
+    printf("W = straight, A = left error, D = right error\n");
+    printf("Space or S = stop, +/- = speed, Q = quit\n");
+    printf("Hold or repeat W/A/D to keep moving. Speed: %d%%\n", base_speed);
+
+    while (true) {
+        int input = getchar_timeout_us(0);
+
+        if (input == 'q' || input == 'Q') {
+            stop_all();
+            printf("Keyboard PID control stopped.\n");
+            return;
+        }
+
+        float error = 0.0f;
+        bool drive_command = true;
+
+        switch (input) {
+            case 'w':
+            case 'W':
+                error = 0.0f;
+                break;
+
+            case 'a':
+            case 'A':
+                error = STEERING_ERROR;
+                break;
+
+            case 'd':
+            case 'D':
+                error = -STEERING_ERROR;
+                break;
+
+            case 's':
+            case 'S':
+            case ' ':
+                stop_all();
+                moving = false;
+                printf("Stopped\n");
+                drive_command = false;
+                break;
+
+            case '+':
+            case '=':
+                base_speed = clamp_int(base_speed + 5, 10, 100);
+                printf("Speed: %d%%\n", base_speed);
+                drive_command = false;
+                break;
+
+            case '-':
+            case '_':
+                base_speed = clamp_int(base_speed - 5, 10, 100);
+                printf("Speed: %d%%\n", base_speed);
+                drive_command = false;
+                break;
+
+            default:
+                drive_command = false;
+                break;
+        }
+
+        if (drive_command) {
+            pid_drive(error, base_speed);
+            moving = true;
+            last_command_ms = to_ms_since_boot(get_absolute_time());
+        }
+
+        uint32_t now_ms = to_ms_since_boot(get_absolute_time());
+        if (moving && now_ms - last_command_ms >= COMMAND_TIMEOUT_MS) {
+            stop_all();
+            moving = false;
+            printf("Stopped: keyboard command timeout\n");
+        }
+
+        sleep_ms(10);
+    }
+}
 //------------------------Main Loop-------------------------//
 int main() {
     // Initialize stdio for printf debugging (over USB).
@@ -562,7 +649,7 @@ int main() {
     run_dummy_pid_test();
     //--------------------------------------------------//
 
-    printf("Pico ready. Send values from -100 to 100.\n");
+    printf("Pico ready. Send -100 to 100, or K/KB/KEYBOARD for keyboard mode.\n");
 
     char line[SERIAL_BUFFER_SIZE];
 
@@ -571,11 +658,21 @@ int main() {
             set_status_led(true);
             printf("Received from Pi: %s\n", line);
 
-            int value = atoi(line);
-            value = clamp_int(value, -100, 100);
+            bool keyboard_command =
+                strcmp(line, "K") == 0 ||
+                strcmp(line, "k") == 0 ||
+                strcmp(line, "KB") == 0 ||
+                strcmp(line, "kb") == 0 ||
+                strcmp(line, "KEYBOARD") == 0 ||
+                strcmp(line, "keyboard") == 0;
 
-
-            pid_drive(value, BASE_SPEED_PERCENT);
+            if (keyboard_command) {
+                run_keyboard_pid_control();
+            } else {
+                int value = atoi(line);
+                value = clamp_int(value, -100, 100);
+                pid_drive(value, BASE_SPEED_PERCENT);
+            }
         }
 
         sleep_ms(5);
