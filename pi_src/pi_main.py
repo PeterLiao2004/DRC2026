@@ -95,9 +95,6 @@ PURPLE_ROI_Y2 = int(FRAME_H * 0.95)
 # How close the purple cube must be to the lookahead band to affect steering
 PURPLE_LOOKAHEAD_MARGIN = 120
 
-# Slow down while avoiding obstacle
-obstacle_speed = 22
-
 # Extra gap between robot target path and purple block
 OBSTACLE_CLEARANCE = 70
 
@@ -117,20 +114,21 @@ last_seen_line = "NONE"
 # If only one line is visible and we cannot estimate centre properly,
 # force a recovery turn instead of driving with an old error.
 RECOVERY_ERROR = 0.85
-RECOVERY_SPEED = 18
 
 # Used to stop obviously bad lane-width updates
 MIN_VALID_LANE_WIDTH = int(FRAME_W * 0.20)
 MAX_VALID_LANE_WIDTH = int(FRAME_W * 0.98)
 
-current_speed = 35
-base_speed = 40
-arrow_confirming_speed = 10
-arrow_speed = 25
+current_speed = 70
+base_speed = 70
+arrow_confirming_speed = 25
+arrow_speed = 55
+RECOVERY_SPEED = 38
+obstacle_speed = 45
 
-Kp = 0.28
+Kp = 0.32
 Ki = 0
-Kd = 0.1
+Kd = 0.14
 
 # ------------------------
 # Green settings
@@ -170,10 +168,10 @@ MIN_ASPECT_RATIO = 0.5
 MAX_ASPECT_RATIO = 4.0
 
 # Arrow bias timing
-ARROW_WAIT_TIME = 2.2
-ARROW_STRONG_TIME = 1.3
-ARROW_MODERATE_TIME = 1.1
-ARROW_WEAK_TIME = 1.5
+ARROW_WAIT_TIME = 1.2
+ARROW_STRONG_TIME = 1.0
+ARROW_MODERATE_TIME = 0.9
+ARROW_WEAK_TIME = 1.3
 
 # Arrow bias strength
 # These values are normalised error values.
@@ -723,10 +721,30 @@ try:
 
                 # Only choose a new side if we are not already avoiding one
                 if obstacle_avoid_side is None:
-                    if pcx < reference_centre:
+
+                    # If only yellow is visible, assume the obstacle is on/near the yellow side.
+                    # Do NOT choose blue-side avoidance, because that would drive left across yellow.
+                    if yellow_x is not None and blue_x is None:
                         obstacle_avoid_side = "YELLOW_SIDE"
-                    else:
+
+                    # If only blue is visible, assume the obstacle is on/near the blue side.
+                    # Do NOT choose yellow-side avoidance, because that would drive right across blue.
+                    elif blue_x is not None and yellow_x is None:
                         obstacle_avoid_side = "BLUE_SIDE"
+
+                    # If both lines are visible, choose based on which line the purple block is closer to.
+                    elif yellow_x is not None and blue_x is not None:
+                        if abs(pcx - yellow_x) < abs(pcx - blue_x):
+                            obstacle_avoid_side = "YELLOW_SIDE"
+                        else:
+                            obstacle_avoid_side = "BLUE_SIDE"
+
+                    # Last resort only
+                    else:
+                        if pcx < reference_centre:
+                            obstacle_avoid_side = "YELLOW_SIDE"
+                        else:
+                            obstacle_avoid_side = "BLUE_SIDE"
 
                 # -----------------------------
                 # Purple is on yellow/left side
@@ -781,6 +799,20 @@ try:
                         line_recovery_mode = True
                         avoiding_obstacle = True
                         obstacle_side = "BLUE_SIDE_PUSH_LEFT"
+
+        # -----------------------------
+        # Safety clamp: never target outside the visible lane line
+        # -----------------------------
+        LINE_CLEARANCE = 55
+
+        if lane_centre_x is not None:
+            # If yellow line is visible, do not aim left of it
+            if yellow_x is not None:
+                lane_centre_x = max(lane_centre_x, yellow_x + LINE_CLEARANCE)
+
+            # If blue line is visible, do not aim right of it
+            if blue_x is not None:
+                lane_centre_x = min(lane_centre_x, blue_x - LINE_CLEARANCE)
 
         # Clear the obstacle latch after the block has disappeared for a bit
         if current_time - last_obstacle_seen_time > OBSTACLE_LATCH_TIME:
