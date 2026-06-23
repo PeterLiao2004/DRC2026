@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
+#include <cmath>
 
 //----------------Hardware Definitions------------------//
 // Wheel Diameter
@@ -57,7 +58,7 @@
 #define SAMPLES_PER_LEVEL 8
 
 // Speed/PID control settings
-#define KP 0.2f
+#define KP 0.5f
 #define KI 0.0f
 #define KD 0.0f
 
@@ -69,7 +70,7 @@ float integral = 0.0f;
 #define MAX_SPEED_PERCENT 100
 
 // How much to reduce base speed at maximum error (100% error = 40% of base speed). This allows more time for correction when the error is large.
-float min_factor = 0.4f;
+float min_factor = 0.6f;
 
 // Signed x4 quadrature counts (every A/B edge is counted).
 volatile int32_t m1_encoder_count = 0;
@@ -206,6 +207,37 @@ bool read_serial_line(char *buffer, int buffer_size) {
     }
 
     return false;
+}
+
+bool parse_drive_command(const char *line, float &error, int &base_speed) {
+    if ((line[0] != 'D' && line[0] != 'd') || line[1] != ',') {
+        return false;
+    }
+
+    char *end = nullptr;
+    const char *error_start = line + 2;
+    error = std::strtof(error_start, &end);
+    if (end == error_start || !std::isfinite(error)) {
+        return false;
+    }
+
+    while (*end == ' ' || *end == '\t') ++end;
+    if (*end != ',') return false;
+
+    const char *speed_start = end + 1;
+    long parsed_speed = std::strtol(speed_start, &end, 10);
+    if (end == speed_start) return false;
+
+    while (*end == ' ' || *end == '\t') ++end;
+    if (*end != '\0') return false;
+
+    if (error < -100.0f || error > 100.0f ||
+        parsed_speed < 0 || parsed_speed > 100) {
+        return false;
+    }
+
+    base_speed = static_cast<int>(parsed_speed);
+    return true;
 }
 
 //-------------------Encoder Handling------------------//
@@ -698,12 +730,19 @@ int main() {
     //run_dummy_pid_test();
     //--------------------------------------------------//
 
-    printf("Pico ready. Send -100 to 100, or K/KB/KEYBOARD for keyboard mode.\n");
+    printf("Pico ready. Send D,error,base_speed (example D,-25.5,30).\n");
+    printf("Send S to stop, or K/KB/KEYBOARD for keyboard mode.\n");
 
     char line[SERIAL_BUFFER_SIZE];
+    constexpr uint32_t SERIAL_COMMAND_TIMEOUT_MS = 500;
+    bool drive_command_active = false;
+    bool serial_timeout_active = false;
+    uint32_t last_drive_command_ms = 0;
 
     while (true) {
         if (read_serial_line(line, SERIAL_BUFFER_SIZE)) {
+            serial_timeout_active = false;
+            set_all_leds(false);
             set_status_led(true);
             printf("Received from Pi: %s\n", line);
 
@@ -716,15 +755,47 @@ int main() {
                 strcmp(line, "keyboard") == 0;
 
             if (keyboard_command) {
+                drive_command_active = false;
                 run_keyboard_pid_control();
+            } else if (strcmp(line, "S") == 0 ||
+                       strcmp(line, "s") == 0 ||
+                       strcmp(line, "STOP") == 0 ||
+                       strcmp(line, "stop") == 0) {
+                stop_all();
+                drive_command_active = false;
+                printf("Stopped\n");
             } else {
-                int value = atoi(line);
-                value = clamp_int(value, -100, 100);
-                pid_drive(value, BASE_SPEED_PERCENT);
+                float error;
+                int base_speed;
+
+                if (parse_drive_command(line, error, base_speed)) {
+                    pid_drive(error, base_speed);
+                    drive_command_active = base_speed > 0;
+                    last_drive_command_ms = to_ms_since_boot(get_absolute_time());
+                    printf("Drive command: error %.2f, base speed %d%%\n",
+                           error,
+                           base_speed);
+                } else {
+                    stop_all();
+                    drive_command_active = false;
+                    printf("Invalid command. Expected D,error,base_speed\n");
+                }
             }
         }
 
+        uint32_t now_ms = to_ms_since_boot(get_absolute_time());
+        if (drive_command_active &&
+            now_ms - last_drive_command_ms >= SERIAL_COMMAND_TIMEOUT_MS) {
+            stop_all();
+            drive_command_active = false;
+            serial_timeout_active = true;
+            set_all_leds(true);
+            printf("Stopped: serial command timeout\n");
+        }
+
         sleep_ms(5);
-        set_status_led(false);
+        if (!serial_timeout_active) {
+            set_status_led(false);
+        }
     }
 }
