@@ -21,7 +21,8 @@ config = picam2.create_video_configuration(
 )
 
 picam2.configure(config)
-picam2.set_controls({"ExposureTime": 13000, "AnalogueGain": 2.8, "ColourGains": (2.1, 1.6)})
+# picam2.set_controls({"ExposureTime": 13000, "AnalogueGain": 2.8, "ColourGains": (2.1, 1.6)})
+picam2.set_controls({"ExposureTime": 9000, "AnalogueGain": 2.0, "ColourGains": (2.1, 1.9)})
 picam2.start()
 
 # Create trackbars for HSV range adjustment
