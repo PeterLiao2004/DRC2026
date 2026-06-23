@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import serial
+import time
 from picamera2 import Picamera2
 
 # ------------------------------
@@ -29,8 +30,8 @@ picam2.configure(config)
 
 # Put your tuned settings here
 picam2.set_controls({
-    "ExposureTime": 8000,
-    "AnalogueGain": 2.0,
+    "ExposureTime": 13000,
+    "AnalogueGain": 2.8,
     "ColourGains": (2.1, 1.6)
 })
 
@@ -41,8 +42,8 @@ picam2.start()
 # -----------------------------
 
 # Yellow line, left side
-YELLOW_LOWER = np.array([16, 137, 109])
-YELLOW_UPPER = np.array([29, 221, 208])
+YELLOW_LOWER = np.array([19, 176, 108])
+YELLOW_UPPER = np.array([29, 255, 182])
 
 # Blue line, right side
 BLUE_LOWER = np.array([97, 23, 11])
@@ -58,6 +59,14 @@ MIN_PIXELS = 50                     # minimum pixels needed to trust a line
 
 last_error = 0.0
 last_lane_width = None
+
+base_speed = 30  # Base speed to send to microcontroller (0-100)
+
+# -----------------------------
+# FPS settings
+# -----------------------------
+prev_time = time.time()
+fps = 0.0
 
 
 def get_line_x(mask, y, band_height):
@@ -82,6 +91,14 @@ def get_line_x(mask, y, band_height):
 try:
     while True:
         frame = picam2.capture_array()
+
+        # Calculate FPS
+        current_time = time.time()
+        dt = current_time - prev_time
+        prev_time = current_time
+
+        if dt > 0:
+            fps = 1.0 / dt
 
         # RGB888 frame, so use RGB2HSV
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -136,7 +153,7 @@ try:
         error_int = int(error * 100)
 
         # Send to microcontroller over serial
-        msg = f"{error_int}\n"
+        msg = f"D,{error_int},{base_speed}\n"
         ser.write(msg.encode("utf-8"))
 
         print(error_int)
@@ -179,6 +196,16 @@ try:
             display,
             f"Error: {error_int}",
             (20, 40),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            (0, 255, 0),
+            2
+        )
+
+        cv2.putText(
+            display,
+            f"FPS: {fps:.1f}",
+            (20, 80),
             cv2.FONT_HERSHEY_SIMPLEX,
             1,
             (0, 255, 0),
