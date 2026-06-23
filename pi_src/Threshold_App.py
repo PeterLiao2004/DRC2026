@@ -25,6 +25,14 @@ picam2.configure(config)
 picam2.set_controls({"ExposureTime": 9000, "AnalogueGain": 2.0, "ColourGains": (2.1, 1.9)})
 picam2.start()
 
+# Default start vals:
+# lower = np.array([0,0,0])
+# upper = np.array([255,255,179])
+
+# Custom start vals:
+lower = np.array([24, 41, 168])
+upper = np.array([32, 167, 255])
+
 # Create trackbars for HSV range adjustment
 cv2.namedWindow('Thresholder_App')
 cv2.createTrackbar("VMax", "Thresholder_App", 0, 255, nothing)
@@ -35,12 +43,12 @@ cv2.createTrackbar("HMax", "Thresholder_App", 0, 179, nothing)
 cv2.createTrackbar("HMin", "Thresholder_App", 0, 179, nothing)
 
 # Set default positions for trackbars
-cv2.setTrackbarPos("VMax", "Thresholder_App", 255)
-cv2.setTrackbarPos("VMin", "Thresholder_App", 0)
-cv2.setTrackbarPos("SMax", "Thresholder_App", 255)
-cv2.setTrackbarPos("SMin", "Thresholder_App", 0)
-cv2.setTrackbarPos("HMax", "Thresholder_App", 179)
-cv2.setTrackbarPos("HMin", "Thresholder_App", 0)
+cv2.setTrackbarPos("VMax", "Thresholder_App", upper[2])
+cv2.setTrackbarPos("VMin", "Thresholder_App", lower[2])
+cv2.setTrackbarPos("SMax", "Thresholder_App", upper[1])
+cv2.setTrackbarPos("SMin", "Thresholder_App", lower[1])
+cv2.setTrackbarPos("HMax", "Thresholder_App", upper[0])
+cv2.setTrackbarPos("HMin", "Thresholder_App", lower[0])
 
 while True:
     # Capture frame from the camera
