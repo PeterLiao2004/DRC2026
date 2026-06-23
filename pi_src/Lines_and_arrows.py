@@ -46,12 +46,19 @@ YELLOW_LOWER = np.array([19, 176, 108])
 YELLOW_UPPER = np.array([29, 255, 182])
 
 # Blue line, right side
-BLUE_LOWER = np.array([97, 23, 11])
-BLUE_UPPER = np.array([179, 177, 115])
+# BLUE_LOWER = np.array([97, 23, 11])
+# BLUE_UPPER = np.array([179, 177, 115])
+
+BLUE_LOWER = np.array([0, 0, 0])
+BLUE_UPPER = np.array([171, 206, 70])
 
 # Arrow thresholds from your arrow detection code
 ARROW_LOWER = np.array([10, 97, 15])
 ARROW_UPPER = np.array([31, 172, 120])
+
+# Green Line, start/stop
+GREEN_LOWER = np.array([19, 134, 19])
+GREEN_UPPER = np.array([59, 209, 104])
 
 # -----------------------------
 # Line following settings
@@ -63,7 +70,13 @@ MIN_PIXELS_LINE = 50
 last_error = 0.0
 last_lane_width = None
 
-base_speed = 40
+current_speed = 35
+base_speed = 35
+arrow_speed = 25
+
+green_seen_start_time = None
+GREEN_STOP_DELAY = 2.3
+robot_stopped_by_green = False
 
 # -----------------------------
 # Arrow detection settings
@@ -83,8 +96,8 @@ MIN_TIP_OFFSET_FRAC = 0.12
 # This helps stop random background objects being detected
 ARROW_ROI_X1 = int(FRAME_W * 0.10)
 ARROW_ROI_X2 = int(FRAME_W * 0.90)
-ARROW_ROI_Y1 = int(FRAME_H * 0.20)
-ARROW_ROI_Y2 = int(FRAME_H * 0.90)
+ARROW_ROI_Y1 = int(FRAME_H * 0.45)
+ARROW_ROI_Y2 = int(FRAME_H * 1.00)
 
 # Basic shape filtering
 MIN_ARROW_W = 35
@@ -95,16 +108,18 @@ MIN_ASPECT_RATIO = 0.5
 MAX_ASPECT_RATIO = 4.0
 
 # Arrow bias timing
-ARROW_STRONG_TIME = 0.5
-ARROW_MODERATE_TIME = 0.5
-ARROW_WEAK_TIME = 0.5
+ARROW_WAIT_TIME = 5
+ARROW_STRONG_TIME = 0
+ARROW_MODERATE_TIME = 0.3
+ARROW_WEAK_TIME = 1.8
 
 # Arrow bias strength
 # These values are normalised error values.
 # 0.95 becomes about 95 after multiplying by 100.
-ARROW_STRONG_BIAS = 0.95
-ARROW_MODERATE_BIAS = 0.60
-ARROW_WEAK_BIAS = 0.30
+ARROW_WAIT_BIAS = 0.02
+ARROW_STRONG_BIAS = 0.45
+ARROW_MODERATE_BIAS = 0.20
+ARROW_WEAK_BIAS = 0.15
 
 # Positive error should turn right.
 # If the robot turns the wrong way, change this to -1.
@@ -164,18 +179,26 @@ def get_line_x(mask, y, band_height):
     return int(np.median(xs))
 
 
-def get_arrow_mask(hsv):
+def get_arrow_mask(hsv, blue_mask):
     """
-    Creates the arrow mask.
-    The ROI prevents the detector from looking at the whole image.
+    Creates the arrow mask, but removes any areas that overlap with the blue line.
+    This stops the blue line being detected as part of the arrow.
     """
 
+    # Normal arrow colour threshold
     mask = cv2.inRange(hsv, ARROW_LOWER, ARROW_UPPER)
 
     # Keep only the arrow search region
     roi_mask = np.zeros_like(mask)
     roi_mask[ARROW_ROI_Y1:ARROW_ROI_Y2, ARROW_ROI_X1:ARROW_ROI_X2] = 255
     mask = cv2.bitwise_and(mask, roi_mask)
+
+    # Dilate the blue mask slightly so we remove the blue line edges too
+    blue_ignore_kernel = np.ones((7, 7), np.uint8)
+    blue_ignore_mask = cv2.dilate(blue_mask, blue_ignore_kernel, iterations=1)
+
+    # Remove anything from the arrow mask that overlaps with the blue line
+    mask = cv2.bitwise_and(mask, cv2.bitwise_not(blue_ignore_mask))
 
     # Clean noise and fill small holes
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, ARROW_KERNEL)
@@ -317,13 +340,16 @@ def get_arrow_bias(current_time):
 
     elapsed = current_time - arrow_bias_start_time
 
-    if elapsed < ARROW_STRONG_TIME:
+    if elapsed < ARROW_WAIT_TIME:
+        bias_strength = ARROW_WAIT_BIAS
+
+    if elapsed < ARROW_WAIT_TIME + ARROW_STRONG_TIME:
         bias_strength = ARROW_STRONG_BIAS
 
-    elif elapsed < ARROW_STRONG_TIME + ARROW_MODERATE_TIME:
+    elif elapsed < ARROW_WAIT_TIME + ARROW_STRONG_TIME + ARROW_MODERATE_TIME:
         bias_strength = ARROW_MODERATE_BIAS
 
-    elif elapsed < ARROW_STRONG_TIME + ARROW_MODERATE_TIME + ARROW_WEAK_TIME:
+    elif elapsed < ARROW_WAIT_TIME + ARROW_STRONG_TIME + ARROW_MODERATE_TIME + ARROW_WEAK_TIME:
         bias_strength = ARROW_WEAK_BIAS
 
     else:
@@ -339,6 +365,44 @@ def get_arrow_bias(current_time):
 
     return 0.0
 
+def detect_green_finish_line(green_mask):
+    """
+    Detects a wide green line across the track.
+    This avoids stopping for small green progress markers.
+    """
+
+    # Look near the lower/middle part of the image
+    y1 = int(FRAME_H * 0.45)
+    y2 = int(FRAME_H * 0.85)
+
+    roi = green_mask[y1:y2, :]
+
+    contours, _ = cv2.findContours(
+        roi,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    if not contours:
+        return False, None
+
+    largest = max(contours, key=cv2.contourArea)
+    area = cv2.contourArea(largest)
+
+    x, y, w, h = cv2.boundingRect(largest)
+
+    # Shift y back to full frame coordinates
+    y = y + y1
+
+    # Tune these
+    MIN_GREEN_AREA = 800
+    MIN_GREEN_WIDTH = int(FRAME_W * 0.25)
+
+    # A finish/start line should be reasonably wide
+    if area > MIN_GREEN_AREA and w > MIN_GREEN_WIDTH:
+        return True, (x, y, w, h)
+
+    return False, (x, y, w, h)
 
 # ============================================================
 # Main loop
@@ -366,9 +430,27 @@ try:
 
         yellow_mask = mask_and_clean(hsv, YELLOW_LOWER, YELLOW_UPPER)
         blue_mask = mask_and_clean(hsv, BLUE_LOWER, BLUE_UPPER)
+        green_mask = mask_and_clean(hsv, GREEN_LOWER, GREEN_UPPER)
+
+        finish_line_seen, green_box = detect_green_finish_line(green_mask)
+
+        # -----------------------------
+        # Green finish line stop delay
+        # -----------------------------
+        if finish_line_seen and green_seen_start_time is None:
+            green_seen_start_time = current_time
+            print("Green line first seen")
+
+        if green_seen_start_time is not None:
+            if current_time - green_seen_start_time >= GREEN_STOP_DELAY:
+                print("Green delay finished - stopping")
+                ser.write(b"D,0,0\n")
+                robot_stopped_by_green = True
+                break
 
         yellow_x = get_line_x(yellow_mask, LOOKAHEAD_Y, BAND_HEIGHT)
         blue_x = get_line_x(blue_mask, LOOKAHEAD_Y, BAND_HEIGHT)
+        green_x = get_line_x(green_mask, LOOKAHEAD_Y, BAND_HEIGHT)
 
         lane_centre_x = None
 
@@ -403,7 +485,7 @@ try:
         # Arrow detection
         # -----------------------------
 
-        arrow_mask = get_arrow_mask(hsv)
+        arrow_mask = get_arrow_mask(hsv, blue_mask)
         arrow_contour = find_largest_arrow_contour(arrow_mask)
         raw_arrow_direction = detect_arrow_direction(arrow_contour)
         stable_arrow_direction = get_stable_arrow_direction(raw_arrow_direction)
@@ -432,8 +514,14 @@ try:
         error_int = int(final_error * 100)
         error_int = max(-100, min(100, error_int))
 
+        # Slow down while arrow bias is active
+        if arrow_bias != 0:
+            current_speed = arrow_speed
+        else:
+            current_speed = base_speed
+
         # Send command to Pico
-        msg = f"D,{error_int},{base_speed}\n"
+        msg = f"D,{error_int},{current_speed}\n"
         ser.write(msg.encode("utf-8"))
 
         print(error_int)
