@@ -59,11 +59,11 @@ picam2.start()
 # GREEN_UPPER = np.array([59, 209, 104])
 
 # UNI TRACK:
-YELLOW_LOWER = np.array([24, 41, 168])
+YELLOW_LOWER = np.array([24, 41, 179])
 YELLOW_UPPER = np.array([32, 167, 255])
 
-BLUE_LOWER = np.array([93, 50, 150])
-BLUE_UPPER = np.array([120, 240, 255])
+BLUE_LOWER = np.array([59, 0, 143])
+BLUE_UPPER = np.array([120, 236, 255])
 
 GREEN_LOWER = np.array([41, 28, 183])
 GREEN_UPPER = np.array([84, 129, 255])
