@@ -85,62 +85,53 @@ def find_largest_contour(mask):
 
 def detect_arrow_direction(contour):
     if contour is None or len(contour) < 5:
-        return "NOT_ARROW", None, None, None
+        return "NOT_ARROW"
 
+    # Bounding box is still needed internally for:
+    # - object width
+    # - finding the upper part of the arrow
     x, y, w, h = cv2.boundingRect(contour)
 
     if w <= 0 or h <= 0:
-        return "NOT_ARROW", None, None, None
+        return "NOT_ARROW"
 
     M = cv2.moments(contour)
 
     if M["m00"] == 0:
-        return "NOT_ARROW", None, None, None
+        return "NOT_ARROW"
 
+    # Centre of the detected shape
     cx = int(M["m10"] / M["m00"])
     cy = int(M["m01"] / M["m00"])
 
     points = contour[:, 0, :]
 
-    # Look for the arrow tip in the upper part of the object
+    # Only look for the tip in the upper part of the contour
     upper_limit = y + int(0.65 * h)
     upper_points = points[points[:, 1] < upper_limit]
 
     if len(upper_points) == 0:
-        return "NOT_ARROW", (cx, cy), None, (x, y, w, h)
+        return "NOT_ARROW"
 
+    # Find the farthest upper contour point from the centre
     distances = (upper_points[:, 0] - cx) ** 2 + (upper_points[:, 1] - cy) ** 2
     tip = upper_points[np.argmax(distances)]
 
     tip_x = int(tip[0])
-    tip_y = int(tip[1])
-
     dx = tip_x - cx
 
     if abs(dx) < MIN_TIP_OFFSET_FRAC * w:
-        direction = "NOT_ARROW"
+        return "NOT_ARROW"
     elif dx > 0:
-        direction = "RIGHT"
+        return "RIGHT"
     else:
-        direction = "LEFT"
-
-    return direction, (cx, cy), (tip_x, tip_y), (x, y, w, h)
+        return "LEFT"
 
 
-def draw_output(frame, contour, direction, centre, tip, bbox, fps):
+def draw_output(frame, contour, direction, fps):
+    # Keep only the green contour
     if contour is not None:
         cv2.drawContours(frame, [contour], -1, (0, 255, 0), 2)
-
-    if bbox is not None:
-        x, y, w, h = bbox
-        cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
-
-    if centre is not None:
-        cv2.circle(frame, centre, 5, (255, 0, 0), -1)
-
-    if tip is not None:
-        cv2.circle(frame, tip, 7, (0, 0, 255), -1)
-        cv2.line(frame, centre, tip, (0, 0, 255), 2)
 
     if direction == "NOT_ARROW":
         colour = (0, 0, 255)
@@ -183,7 +174,7 @@ try:
 
         contour = find_largest_contour(mask)
 
-        direction, centre, tip, bbox = detect_arrow_direction(contour)
+        direction = detect_arrow_direction(contour)
 
         if direction != last_direction:
             print("Direction:", direction)
@@ -194,7 +185,7 @@ try:
         fps = 1.0 / dt if dt > 0 else 0.0
         prev_time = current_time
 
-        draw_output(frame, contour, direction, centre, tip, bbox, fps)
+        draw_output(frame, contour, direction, fps)
 
         cv2.imshow("Mask", mask)
         cv2.imshow("Arrow Detection", frame)
