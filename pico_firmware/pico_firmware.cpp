@@ -56,9 +56,20 @@
 #define RPM_SAMPLE_MS 500
 #define SAMPLES_PER_LEVEL 8
 
-// PID control settings
-#define KP 0.5f
+// Speed/PID control settings
+#define KP 0.2f
+#define KI 0.0f
+#define KD 0.0f
+
+float last_error = 0.0f;
+float integral = 0.0f;
+
 #define BASE_SPEED_PERCENT 30
+#define MIN_SPEED_PERCENT 10
+#define MAX_SPEED_PERCENT 100
+
+// How much to reduce base speed at maximum error (100% error = 40% of base speed). This allows more time for correction when the error is large.
+float min_factor = 0.4f;
 
 // Signed x4 quadrature counts (every A/B edge is counted).
 volatile int32_t m1_encoder_count = 0;
@@ -155,13 +166,20 @@ bool is_button_pressed(uint button_pin) {
     return gpio_get(button_pin) == 0;
 }
 
-
-//--------------------Serial Communication------------------//
+//---------------------Utility Functions------------------//
 int clamp_int(int value, int min_value, int max_value) {
     if (value < min_value) return min_value;
     if (value > max_value) return max_value;
     return value;
 }
+
+float clamp_float(float value, float min_value, float max_value) {
+    if (value < min_value) return min_value;
+    if (value > max_value) return max_value;
+    return value;
+}
+
+//--------------------Serial Communication------------------//
 
 bool read_serial_line(char *buffer, int buffer_size) {
     static int index = 0;
@@ -351,15 +369,46 @@ void turn_right(int speed_percent) {
     motor2_set_percent(-speed_percent);
 }
 
-//-------------------PID Control ---------------------------------//
+//-------------------Speed/PID Control ---------------------------------//
+// Speed based on error magnitude: higher error = slower base speed, to allow more correction time.
+int calculate_scaled_speed(int error, int base_speed) {
+    // error: -100 to +100
+    // pi_base_speed: 0 to 100
+
+    error = clamp_int(error, -100, 100);
+    base_speed = clamp_int(base_speed, 0, 100);
+
+    if (base_speed == 0) return 0;
+
+    int abs_error = abs(error);
+
+    // Reduce speed as error increases.
+    float error_factor = 1.0f - (abs_error / 100.0f) * (1.0f - min_factor);
+    error_factor = clamp_float(error_factor, min_factor, 1.0f);
+
+    int adjusted_base_speed = static_cast<int>(base_speed * error_factor);
+
+    return clamp_int(adjusted_base_speed, MIN_SPEED_PERCENT, MAX_SPEED_PERCENT);
+}
+
 // This is a simple proportional controller that adjusts motor speeds based on an error value.
 void pid_drive(float error, int base_speed) {
-    float Kp = KP;  // steering strength, tune this later
+    // Stop if base speed is zero
+    if (base_speed <= 0) {
+        stop_all();
+        return;
+    }
+
+    float Kp = KP;
+    //float Ki = KI;  
+    //float Kd = KD; 
+
+    int scaled_speed = calculate_scaled_speed(static_cast<int>(error), base_speed);
 
     int correction = static_cast<int>(Kp * error);
 
-    int left_speed = base_speed + correction;
-    int right_speed = base_speed - correction;
+    int left_speed = scaled_speed + correction;
+    int right_speed = scaled_speed - correction;
 
     // Clamp speeds to -100 to 100
     left_speed = clamp_int(left_speed, -100, 100);
@@ -373,9 +422,9 @@ void pid_drive(float error, int base_speed) {
         set_turn_indicators(false, false);
     }
 
-    if (base_speed > 0) {
+    if (scaled_speed > 0) {
         set_motion_indicators(true, false);
-    } else if (base_speed < 0) {
+    } else if (scaled_speed < 0) {
         set_motion_indicators(false, true);
     } else {
         set_motion_indicators(false, false);
@@ -386,7 +435,7 @@ void pid_drive(float error, int base_speed) {
     motor2_set_percent(right_speed);
 
     printf("error: %.2f, base: %d, left: %d, right: %d\n",
-           error, base_speed, left_speed, right_speed);
+           error, scaled_speed, left_speed, right_speed);
 }
 
 //------------------------Testing/Helpers -------------------------//
