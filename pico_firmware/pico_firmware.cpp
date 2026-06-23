@@ -132,6 +132,28 @@ void setup_gpio() {
     stop_all();
 }
 
+//---------------------LED Control------------------//
+void set_led(uint led_pin, bool on) {
+    gpio_put(led_pin, on);
+}
+
+void toggle_led(uint led_pin) {
+    set_led(led_pin, !gpio_get_out_level(led_pin));
+}
+
+bool is_led_on(uint led_pin) {
+    return gpio_get_out_level(led_pin);
+}
+
+void set_status_led(bool on) {
+    set_led(STATUS_LED_PIN, on);
+}
+
+//---------------------Button Control------------------//
+// Buttons use pull-ups, so a LOW input means the button is pressed.
+bool is_button_pressed(uint button_pin) {
+    return gpio_get(button_pin) == 0;
+}
 
 
 //--------------------Serial Communication------------------//
@@ -345,15 +367,18 @@ void print_rpm(int motor, int32_t delta_counts) {
 void run_drive_step(const char *name,
                     void (*movement)(int),
                     int speed_percent,
+                    uint led_pin,
                     uint32_t duration_ms) {
     int32_t start_m1;
     int32_t start_m2;
     read_encoder_counts(start_m1, start_m2);
 
     printf("%s at %d%%\n", name, speed_percent);
+    set_led(led_pin, true);
     movement(speed_percent);
     sleep_ms(duration_ms);
     stop_all();
+    set_led(led_pin, false);
 
     int32_t end_m1;
     int32_t end_m2;
@@ -371,19 +396,19 @@ void run_drive_test() {
     printf("\nDrive test starting. Keep the area clear.\n");
     sleep_ms(2000);
 
-    run_drive_step("Forward", drive_forward, TEST_SPEED_PERCENT, 1500);
-    run_drive_step("Backward", drive_backward, TEST_SPEED_PERCENT, 1500);
-    run_drive_step("Turn left", turn_left, TEST_SPEED_PERCENT, 1000);
-    run_drive_step("Turn right", turn_right, TEST_SPEED_PERCENT, 1000);
+    run_drive_step("Forward", drive_forward, TEST_SPEED_PERCENT, LED1, 1500);
+    run_drive_step("Backward", drive_backward, TEST_SPEED_PERCENT, LED2, 1500);
+    run_drive_step("Turn left", turn_left, TEST_SPEED_PERCENT, LED3, 1000);
+    run_drive_step("Turn right", turn_right, TEST_SPEED_PERCENT, LED4, 1000);
 
     stop_all();
-    printf("Drive test complete. Press R to run it again.\n");
+    printf("Drive test complete.\n");
 }
 
 void set_all_leds(bool on) {
     const uint led_pins[] = {LED1, LED2, LED3, LED4, STATUS_LED_PIN};
     for (uint pin : led_pins) {
-        gpio_put(pin, on);
+        set_led(pin, on);
     }
 }
 
@@ -394,9 +419,9 @@ void run_led_test() {
     set_all_leds(false);
 
     for (uint pin : led_pins) {
-        gpio_put(pin, true);
+        set_led(pin, true);
         sleep_ms(400);
-        gpio_put(pin, false);
+        set_led(pin, false);
     }
 
     printf("LED test: all LEDs on.\n");
@@ -416,11 +441,11 @@ void run_button_test() {
     printf("LED1 follows BUTTON1; LED2 follows BUTTON2.\n");
 
     while (to_ms_since_boot(get_absolute_time()) - start_ms < BUTTON_TEST_MS) {
-        bool button1_pressed = gpio_get(BUTTON1) == 0;
-        bool button2_pressed = gpio_get(BUTTON2) == 0;
+        bool button1_pressed = is_button_pressed(BUTTON1);
+        bool button2_pressed = is_button_pressed(BUTTON2);
 
-        gpio_put(LED1, button1_pressed);
-        gpio_put(LED2, button2_pressed);
+        set_led(LED1, button1_pressed);
+        set_led(LED2, button2_pressed);
 
         if (button1_pressed != previous_button1) {
             printf("BUTTON1 %s\n", button1_pressed ? "pressed" : "released");
@@ -435,8 +460,8 @@ void run_button_test() {
         sleep_ms(20);
     }
 
-    gpio_put(LED1, false);
-    gpio_put(LED2, false);
+    set_led(LED1, false);
+    set_led(LED2, false);
     printf("Button test complete.\n");
 }
 
@@ -450,7 +475,7 @@ void run_hardware_test() {
     run_drive_test();
 
     set_all_leds(false);
-    gpio_put(STATUS_LED_PIN, true);
+    set_status_led(true);
     printf("=== Hardware self-test complete ===\n\n");
 }
 
@@ -476,8 +501,8 @@ int main() {
     sleep_ms(3000);
 
     // Testing code
-    run_led_test();
-    //run_hardware_test();
+    //run_led_test();
+    run_hardware_test();
 
     printf("Pico ready. Send values from -100 to 100.\n");
 
@@ -485,6 +510,7 @@ int main() {
 
     while (true) {
         if (read_serial_line(line, SERIAL_BUFFER_SIZE)) {
+            set_status_led(true);
             printf("Received from Pi: %s\n", line);
 
             int value = atoi(line);
@@ -495,5 +521,6 @@ int main() {
         }
 
         sleep_ms(5);
+        set_status_led(false);
     }
 }
