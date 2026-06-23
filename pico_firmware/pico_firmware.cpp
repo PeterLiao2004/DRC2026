@@ -58,19 +58,24 @@
 #define SAMPLES_PER_LEVEL 8
 
 // Speed/PID control settings
-#define KP 0.5f
+#define KP 0.3f
 #define KI 0.0f
-#define KD 0.0f
+#define KD 0.2f
+#define DERIVATIVE_FILTER_ALPHA 0.2f
+#define INTEGRAL_LIMIT 200.0f
 
 float last_error = 0.0f;
 float integral = 0.0f;
+float filtered_derivative = 0.0f;
+uint64_t last_control_time_us = 0;
+bool derivative_initialized = false;
 
 #define BASE_SPEED_PERCENT 30
 #define MIN_SPEED_PERCENT 10
 #define MAX_SPEED_PERCENT 100
 
 // How much to reduce base speed at maximum error (100% error = 40% of base speed). This allows more time for correction when the error is large.
-float min_factor = 0.6f;
+float min_factor = 1.0f;
 
 // Signed x4 quadrature counts (every A/B edge is counted).
 volatile int32_t m1_encoder_count = 0;
@@ -369,6 +374,13 @@ void stop_all() {
     motor2_set_percent(0);
     set_turn_indicators(false, false);
     set_motion_indicators(false, false);
+
+    // Do not carry stale PID history into the next drive command.
+    last_error = 0.0f;
+    integral = 0.0f;
+    filtered_derivative = 0.0f;
+    last_control_time_us = 0;
+    derivative_initialized = false;
 }
 
 void drive_forward(int speed_percent) {
@@ -423,7 +435,7 @@ int calculate_scaled_speed(int error, int base_speed) {
     return clamp_int(adjusted_base_speed, MIN_SPEED_PERCENT, MAX_SPEED_PERCENT);
 }
 
-// This is a simple proportional controller that adjusts motor speeds based on an error value.
+// Proportional-integral-derivative steering controller.
 void pid_drive(float error, int base_speed) {
     // Stop if base speed is zero
     if (base_speed <= 0) {
@@ -431,13 +443,40 @@ void pid_drive(float error, int base_speed) {
         return;
     }
 
-    float Kp = KP;
-    //float Ki = KI;  
-    //float Kd = KD; 
-
     int scaled_speed = calculate_scaled_speed(static_cast<int>(error), base_speed);
 
-    int correction = static_cast<int>(Kp * error);
+    uint64_t now_us = to_us_since_boot(get_absolute_time());
+    float derivative = 0.0f;
+    float dt_seconds = 0.0f;
+
+    if (derivative_initialized) {
+        dt_seconds = (now_us - last_control_time_us) / 1000000.0f;
+
+        // Ignore samples that are too close together or follow a long pause.
+        if (dt_seconds >= 0.005f && dt_seconds <= 0.25f) {
+            float raw_derivative = (error - last_error) / dt_seconds;
+            filtered_derivative =
+                DERIVATIVE_FILTER_ALPHA * raw_derivative +
+                (1.0f - DERIVATIVE_FILTER_ALPHA) * filtered_derivative;
+            derivative = filtered_derivative;
+
+            // Trapezoidal integration with a limit to prevent windup.
+            integral += 0.5f * (error + last_error) * dt_seconds;
+            integral = clamp_float(integral, -INTEGRAL_LIMIT, INTEGRAL_LIMIT);
+        } else {
+            filtered_derivative = 0.0f;
+        }
+    }
+
+    last_error = error;
+    last_control_time_us = now_us;
+    derivative_initialized = true;
+
+    float p_term = KP * error;
+    float i_term = KI * integral;
+    float d_term = KD * derivative;
+    int correction = static_cast<int>(std::round(p_term + i_term + d_term));
+    correction = clamp_int(correction, -100, 100);
 
     int left_speed = scaled_speed + correction;
     int right_speed = scaled_speed - correction;
@@ -466,8 +505,8 @@ void pid_drive(float error, int base_speed) {
     motor1_set_percent(left_speed);
     motor2_set_percent(right_speed);
 
-    printf("error: %.2f, base: %d, left: %d, right: %d\n",
-           error, scaled_speed, left_speed, right_speed);
+    printf("error: %.2f, P: %.2f, I: %.2f, D: %.2f, base: %d, left: %d, right: %d\n",
+           error, p_term, i_term, d_term, scaled_speed, left_speed, right_speed);
 }
 
 //------------------------Testing/Helpers -------------------------//
