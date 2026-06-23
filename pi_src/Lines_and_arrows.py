@@ -62,8 +62,8 @@ picam2.start()
 YELLOW_LOWER = np.array([24, 41, 168])
 YELLOW_UPPER = np.array([32, 167, 255])
 
-BLUE_LOWER = np.array([97, 61, 164])
-BLUE_UPPER = np.array([115, 235, 255])
+BLUE_LOWER = np.array([93, 50, 150])
+BLUE_UPPER = np.array([120, 240, 255])
 
 GREEN_LOWER = np.array([41, 28, 183])
 GREEN_UPPER = np.array([84, 129, 255])
@@ -77,24 +77,24 @@ ARROW_UPPER = np.array([107, 48, 162])
 # -----------------------------
 # Line following settings
 # -----------------------------
-LOOKAHEAD_Y = int(FRAME_H * 0.55)
-BAND_HEIGHT = 80
+LOOKAHEAD_Y = int(FRAME_H * 0.50)
+BAND_HEIGHT = 100
 MIN_PIXELS_LINE = 50
 
 last_error = 0.0
 last_lane_width = None
 
 current_speed = 35
-base_speed = 35
-arrow_confirming_speed = 15
+base_speed = 40
+arrow_confirming_speed = 10
 arrow_speed = 25
 
-Kp = 0.2
+Kp = 0.28
 Ki = 0
 Kd = 0.1
 
 green_seen_start_time = None
-GREEN_STOP_DELAY = 2.3
+GREEN_STOP_DELAY = 2.5
 robot_stopped_by_green = False
 
 # -----------------------------
@@ -127,18 +127,18 @@ MIN_ASPECT_RATIO = 0.5
 MAX_ASPECT_RATIO = 4.0
 
 # Arrow bias timing
-ARROW_WAIT_TIME = 3
-ARROW_STRONG_TIME = 0.5
+ARROW_WAIT_TIME = 2.2
+ARROW_STRONG_TIME = 1.3
 ARROW_MODERATE_TIME = 1.1
-ARROW_WEAK_TIME = 0.5
+ARROW_WEAK_TIME = 1.5
 
 # Arrow bias strength
 # These values are normalised error values.
 # 0.95 becomes about 95 after multiplying by 100.
 ARROW_WAIT_BIAS = 0.02
-ARROW_STRONG_BIAS = 0.45
-ARROW_MODERATE_BIAS = 0.20
-ARROW_WEAK_BIAS = 0.15
+ARROW_STRONG_BIAS = 0.8
+ARROW_MODERATE_BIAS = 0.50
+ARROW_WEAK_BIAS = 0.25
 
 # Positive error should turn right.
 # If the robot turns the wrong way, change this to -1.
@@ -543,10 +543,14 @@ try:
         # -----------------------------
         if finish_line_seen and green_seen_start_time is None:
             green_seen_start_time = current_time
-            print("Green line first seen")
+            print("Green line first seen - still following line")
 
+        # Keep following yellow/blue while the green timer counts down
         if green_seen_start_time is not None:
-            if current_time - green_seen_start_time >= GREEN_STOP_DELAY:
+            green_elapsed = current_time - green_seen_start_time
+            green_remaining = GREEN_STOP_DELAY - green_elapsed
+
+            if green_elapsed >= GREEN_STOP_DELAY:
                 print("Green delay finished - stopping")
                 ser.write(b"D,0,0\n")
                 robot_stopped_by_green = True
@@ -554,7 +558,6 @@ try:
 
         yellow_x = get_line_x(yellow_mask, LOOKAHEAD_Y, BAND_HEIGHT)
         blue_x = get_line_x(blue_mask, LOOKAHEAD_Y, BAND_HEIGHT)
-        green_x = get_line_x(green_mask, LOOKAHEAD_Y, BAND_HEIGHT)
 
         lane_centre_x = None
 
@@ -584,6 +587,7 @@ try:
         else:
             # If no line is found, keep the previous error
             error = last_error
+
 
         # -----------------------------
         # Arrow detection
