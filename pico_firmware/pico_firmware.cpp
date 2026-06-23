@@ -358,17 +358,17 @@ void pid_drive(float error, int base_speed) {
 
     int correction = static_cast<int>(Kp * error);
 
-    int left_speed = base_speed - correction;
-    int right_speed = base_speed + correction;
+    int left_speed = base_speed + correction;
+    int right_speed = base_speed - correction;
 
     // Clamp speeds to -100 to 100
     left_speed = clamp_int(left_speed, -100, 100);
     right_speed = clamp_int(right_speed, -100, 100);
 
     if (correction > 0) {
-        set_turn_indicators(true, false);
-    } else if (correction < 0) {
         set_turn_indicators(false, true);
+    } else if (correction < 0) {
+        set_turn_indicators(true, false);
     } else {
         set_turn_indicators(false, false);
     }
@@ -518,11 +518,11 @@ void run_hardware_test() {
 // Dummy error values for testing P Control
 const float dummy_errors[] = {
     0.0f,     // straight
-    20.0f,    // slight correction left
-    50.0f,    // stronger correction left
+    -20.0f,   // slight correction left
+    -50.0f,   // stronger correction left
     0.0f,     // straight again
-    -20.0f,   // slight correction right
-    -50.0f,   // stronger correction right
+    20.0f,    // slight correction right
+    50.0f,    // stronger correction right
     0.0f      // straight
 };
 
@@ -581,12 +581,12 @@ void run_keyboard_pid_control() {
 
             case 'a':
             case 'A':
-                error = STEERING_ERROR;
+                error = -STEERING_ERROR;
                 break;
 
             case 'd':
             case 'D':
-                error = -STEERING_ERROR;
+                error = STEERING_ERROR;
                 break;
 
             case 's':
@@ -646,7 +646,7 @@ int main() {
     //run_led_test();
     //run_button_test();
     //run_hardware_test();
-    run_dummy_pid_test();
+    //run_dummy_pid_test();
     //--------------------------------------------------//
 
     printf("Pico ready. Send -100 to 100, or K/KB/KEYBOARD for keyboard mode.\n");
