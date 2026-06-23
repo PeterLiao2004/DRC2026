@@ -10,6 +10,7 @@ from picamera2 import Picamera2
 
 FRAME_W = 960
 FRAME_H = 540
+DISPLAY_SCALE = 1.0  # Scale for display windows (not processing)
 picam2 = Picamera2()
 
 config = picam2.create_video_configuration(
@@ -19,30 +20,35 @@ config = picam2.create_video_configuration(
 )
 
 picam2.configure(config)
+picam2.start()
 
 # Put your tuned settings here
 picam2.set_controls({
+    "AeEnable": False,
+    "AwbEnable": False,
     "ExposureTime": 13000,
     "AnalogueGain": 2.8,
     "ColourGains": (2.1, 1.6)
 })
 
-picam2.start()
+
 
 # HSV threshold placeholders
 # OpenCV HSV ranges:
 # H: 0–179
 # S: 0–255
 # V: 0–255
-ARROW_LOWER = np.array([11, 110, 63])
-ARROW_UPPER = np.array([21, 173, 79])
+# ARROW_LOWER = np.array([12, 105, 35])
+# ARROW_UPPER = np.array([19, 170, 96])
+ARROW_LOWER = np.array([10, 97, 15])
+ARROW_UPPER = np.array([31, 172, 120])
 
 # Minimum detected object size
 MIN_AREA_FRAC = 0.005
-MIN_AREA = int(FRAME_WIDTH * FRAME_HEIGHT * MIN_AREA_FRAC)
+MIN_AREA = int(FRAME_W * FRAME_H * MIN_AREA_FRAC)
 
 # Mask cleanup
-KERNEL_SIZE = 7
+KERNEL_SIZE = 3
 
 # Arrow detection tuning
 MIN_TIP_OFFSET_FRAC = 0.10
@@ -54,17 +60,6 @@ time.sleep(0.5)
 # PROCESSING FUNCTIONS
 # ============================================================
 
-def create_hsv_mask(frame_rgb):
-    """
-    Converts RGB camera frame to HSV and thresholds it.
-    White pixels in the mask are detected object pixels.
-    """
-
-    hsv = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2HSV)
-    
-
-    return mask
-
 
 def mask_and_clean(hsv, lower, upper, kernel_size=5):
     """
@@ -72,9 +67,11 @@ def mask_and_clean(hsv, lower, upper, kernel_size=5):
     """
 
     mask = cv2.inRange(hsv, lower, upper)
+    cv2.imshow("Raw Mask", mask)  # Debugging raw mask view
 
     kernel = np.ones((kernel_size, kernel_size), np.uint8)
     cleaned_mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    cleaned_mask = cv2.morphologyEx(cleaned_mask, cv2.MORPH_CLOSE, kernel)
 
     return cleaned_mask
 
@@ -252,11 +249,12 @@ last_direction = None
 try:
     while True:
         # Capture live frame from Pi Camera 3
-        frame_rgb = picam2.capture_array()
+        frame_bgr = picam2.capture_array()
 
         # Mask processing
-        hsv = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2HSV)
-        mask_clean = mask_and_clean(hsv), ARROW_LOWER, ARROW_UPPER, KERNEL_SIZE)
+        hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
+        mask_clean = mask_and_clean(hsv, ARROW_LOWER, ARROW_UPPER, KERNEL_SIZE)
+        cv2.imshow("Mask", mask_clean)  # Debugging mask view
 
         # Find largest object
         contour = find_largest_contour(mask_clean)
@@ -268,9 +266,6 @@ try:
         if direction != last_direction:
             print("Direction:", direction)
             last_direction = direction
-
-        # Convert for OpenCV display
-        frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
 
         # FPS
         current_time = time.time()
