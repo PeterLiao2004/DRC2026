@@ -120,27 +120,72 @@ RECOVERY_ERROR = 0.85
 MIN_VALID_LANE_WIDTH = int(FRAME_W * 0.20)
 MAX_VALID_LANE_WIDTH = int(FRAME_W * 0.98)
 
-current_speed = 60
-base_speed = 60
-arrow_confirming_speed = 15
-arrow_speed = 45
-RECOVERY_SPEED = 28
-obstacle_speed = 30
+# SLOW, working pretty well
+# current_speed = 60
+# base_speed = 60
+# arrow_confirming_speed = 15
+# arrow_speed = 45
+# RECOVERY_SPEED = 28
+# obstacle_speed = 30
 
-Kp = 0.2
+# GREEN_STOP_DELAY = 2.5
+
+# Kp = 0.2
+# Ki = 0
+# Kd = 0.11
+
+# Medium speed, pretty decent but a little dodgy
+# current_speed = 70
+# base_speed = 70
+# arrow_confirming_speed = 30
+# arrow_speed = 55
+# RECOVERY_SPEED = 30
+# obstacle_speed = 30
+
+# GREEN_STOP_DELAY = 2.0
+
+# Kp = 0.25
+# Ki = 0
+# Kd = 0.11
+
+# Fast! Works pretty good!
+# current_speed = 90
+# base_speed = 90
+# arrow_confirming_speed = 35
+# arrow_speed = 60
+# RECOVERY_SPEED = 35
+# obstacle_speed = 40
+
+# GREEN_STOP_DELAY = 1.6
+
+# Kp = 0.3
+# Ki = 0
+# Kd = 0.11
+
+# Very Fast!!!!
+current_speed = 100
+base_speed = 100
+arrow_confirming_speed = 40
+arrow_speed = 70
+RECOVERY_SPEED = 45
+obstacle_speed = 55
+
+GREEN_STOP_DELAY = 1.6
+
+Kp = 0.4
 Ki = 0
-Kd = 0.11
+Kd = 0.18
+
+# Ignore green for the first 30 seconds after starting
+GREEN_IGNORE_TIME = 20
 
 # ------------------------
 # Green settings
 # ------------------------
 
 green_seen_start_time = None
-GREEN_STOP_DELAY = 2.5
 robot_stopped_by_green = False
 
-# Ignore green for the first 30 seconds after starting
-GREEN_IGNORE_TIME = 30
 robot_start_time = time.time()
 
 # -----------------------------
