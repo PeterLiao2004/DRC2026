@@ -76,7 +76,7 @@ ARROW_UPPER = np.array([77, 47, 166])
 # -----------------------------
 # Line following settings
 # -----------------------------
-LOOKAHEAD_Y = int(FRAME_H * 0.50)
+LOOKAHEAD_Y = int(FRAME_H * 0.58)
 BAND_HEIGHT = 100
 MIN_PIXELS_LINE = 50
 
@@ -118,16 +118,16 @@ RECOVERY_ERROR = 0.85
 MIN_VALID_LANE_WIDTH = int(FRAME_W * 0.20)
 MAX_VALID_LANE_WIDTH = int(FRAME_W * 0.98)
 
-current_speed = 70
-base_speed = 70
-arrow_confirming_speed = 25
-arrow_speed = 55
-RECOVERY_SPEED = 38
-obstacle_speed = 45
+current_speed = 60
+base_speed = 60
+arrow_confirming_speed = 15
+arrow_speed = 45
+RECOVERY_SPEED = 28
+obstacle_speed = 30
 
-Kp = 0.32
+Kp = 0.2
 Ki = 0
-Kd = 0.14
+Kd = 0.11
 
 # ------------------------
 # Green settings
@@ -167,8 +167,8 @@ MIN_ASPECT_RATIO = 0.5
 MAX_ASPECT_RATIO = 4.0
 
 # Arrow bias timing
-ARROW_WAIT_TIME = 1.2
-ARROW_STRONG_TIME = 1.0
+ARROW_WAIT_TIME = 0.8
+ARROW_STRONG_TIME = 1.2
 ARROW_MODERATE_TIME = 1.7
 ARROW_WEAK_TIME = 1.2
 
@@ -176,8 +176,8 @@ ARROW_WEAK_TIME = 1.2
 # These values are normalised error values.
 # 0.95 becomes about 95 after multiplying by 100.
 ARROW_WAIT_BIAS = 0.02
-ARROW_STRONG_BIAS = 0.75
-ARROW_MODERATE_BIAS = 0.45
+ARROW_STRONG_BIAS = 0.85
+ARROW_MODERATE_BIAS = 0.5
 ARROW_WEAK_BIAS = 0.2
 
 # Positive error should turn right.
