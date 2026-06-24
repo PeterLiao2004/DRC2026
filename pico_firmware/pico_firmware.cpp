@@ -103,10 +103,10 @@ void reset_encoder_counts() {
 
 // Converts change in encoder counts over a sample period to RPM x10 (to avoid floating-point).
 int32_t counts_to_rpm_x10(int32_t delta_counts, uint32_t sample_ms) {
-    // RPM x10 avoids relying on floating-point printf support.
-    int64_t magnitude = delta_counts < 0 ? -(int64_t)delta_counts : delta_counts;
-    return static_cast<int32_t>((magnitude * 600000) /
-                                (ENCODER_COUNTS_PER_REV * sample_ms));
+    // Keep the sign so negative RPM continues to indicate reverse movement.
+    return static_cast<int32_t>(
+        (static_cast<int64_t>(delta_counts) * 600000) /
+        (static_cast<int64_t>(ENCODER_COUNTS_PER_REV) * sample_ms));
 }
 //----------------------------------------------------//
 //-------------------PWM/Motor Control------------------//
@@ -195,14 +195,18 @@ void turn_right(int speed_percent) {
 }
 
 //------------------------Testing/Helpers -------------------------//
-// Helper function to print RPM in a human-friendly format.
-void print_rpm(int motor, int32_t delta_counts) {
-    int32_t rpm_x10 = counts_to_rpm_x10(delta_counts, RPM_SAMPLE_MS);
-    printf("M%d: %ld counts, %ld.%01ld RPM",
+// Prints signed RPM to one decimal place without floating-point printf support.
+void print_rpm(const char *motor, int32_t delta_counts, uint32_t sample_ms) {
+    int32_t rpm_x10 = counts_to_rpm_x10(delta_counts, sample_ms);
+    int64_t magnitude = rpm_x10 < 0
+        ? -static_cast<int64_t>(rpm_x10)
+        : static_cast<int64_t>(rpm_x10);
+
+    printf("%s RPM: %s%lld.%01lld",
            motor,
-           static_cast<long>(delta_counts),
-           static_cast<long>(rpm_x10 / 10),
-           static_cast<long>(rpm_x10 % 10));
+           rpm_x10 < 0 ? "-" : "",
+           static_cast<long long>(magnitude / 10),
+           static_cast<long long>(magnitude % 10));
 }
 
 // Prints cumulative wheel rotations to three decimal places without requiring
@@ -239,9 +243,13 @@ int main() {
     reset_encoder_counts();
     int32_t last_m1 = 0;
     int32_t last_m2 = 0;
+    int32_t rpm_sample_m1 = 0;
+    int32_t rpm_sample_m2 = 0;
+    uint64_t last_rpm_sample_us = time_us_64();
 
     printf("\nManual wheel rotation test\n");
-    printf("Rotate either wheel by hand. Press R to reset the rotations.\n");
+    printf("Rotate either wheel by hand. RPM updates every %d ms. Press R to reset.\n",
+           RPM_SAMPLE_MS);
 
     while (true) {
         int input = getchar_timeout_us(0);
@@ -249,6 +257,9 @@ int main() {
             reset_encoder_counts();
             last_m1 = 0;
             last_m2 = 0;
+            rpm_sample_m1 = 0;
+            rpm_sample_m2 = 0;
+            last_rpm_sample_us = time_us_64();
             printf("Rotations reset: M1 = 0.000, M2 = 0.000\n");
         }
 
@@ -257,12 +268,27 @@ int main() {
         read_encoder_counts(m1, m2);
 
         if (m1 != last_m1 || m2 != last_m2) {
-            print_rotations("M1", m1);
-            printf("\t");
-            print_rotations("M2", m2);
-            printf("\n");
+            // print_rotations("M1", m1);
+            // printf("\t");
+            // print_rotations("M2", m2);
+            // printf("\n");
             last_m1 = m1;
             last_m2 = m2;
+        }
+
+        uint64_t now_us = time_us_64();
+        uint64_t elapsed_us = now_us - last_rpm_sample_us;
+        if (elapsed_us >= static_cast<uint64_t>(RPM_SAMPLE_MS) * 1000) {
+            uint32_t elapsed_ms = static_cast<uint32_t>(elapsed_us / 1000);
+
+            print_rpm("M1", m1 - rpm_sample_m1, elapsed_ms);
+            printf("\t");
+            print_rpm("M2", m2 - rpm_sample_m2, elapsed_ms);
+            printf("\n");
+
+            rpm_sample_m1 = m1;
+            rpm_sample_m2 = m2;
+            last_rpm_sample_us = now_us;
         }
 
         sleep_ms(20);
