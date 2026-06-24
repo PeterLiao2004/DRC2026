@@ -77,6 +77,13 @@ bool derivative_initialized = false;
 #define MIN_SPEED_PERCENT 10
 #define MAX_SPEED_PERCENT 100
 
+// Simple encoder speed-control settings. These gains are PWM-percent per RPM
+// and PWM-percent per RPM-second respectively.
+#define TARGET_WHEEL_RPM 60.0f
+#define SPEED_KP 0.1f
+#define SPEED_KI 0.0f
+#define SPEED_INTEGRAL_LIMIT 50.0f
+
 // How much to reduce base speed at maximum error (100% error = 40% of base speed). This allows more time for correction when the error is large.
 float min_factor = 1.0f;
 
@@ -595,6 +602,7 @@ struct EncoderRpmState {
     uint64_t previous_print_us = 0;
     int32_t m1_rpm_x10 = 0;
     int32_t m2_rpm_x10 = 0;
+    float sample_seconds = 0.0f;
 };
 
 void initialize_encoder_rpm(EncoderRpmState &state) {
@@ -603,11 +611,11 @@ void initialize_encoder_rpm(EncoderRpmState &state) {
     state.previous_print_us = state.previous_sample_us;
 }
 
-void update_encoder_rpm(EncoderRpmState &state) {
+bool update_encoder_rpm(EncoderRpmState &state) {
     uint64_t now_us = time_us_64();
     uint64_t elapsed_us = now_us - state.previous_sample_us;
     if (elapsed_us < static_cast<uint64_t>(RPM_SAMPLE_MS) * 1000) {
-        return;
+        return false;
     }
 
     int32_t current_m1;
@@ -615,6 +623,7 @@ void update_encoder_rpm(EncoderRpmState &state) {
     read_encoder_counts(current_m1, current_m2);
 
     uint32_t elapsed_ms = static_cast<uint32_t>(elapsed_us / 1000);
+    state.sample_seconds = elapsed_us / 1000000.0f;
     state.m1_rpm_x10 = counts_to_rpm_x10(current_m1 - state.previous_m1,
                                          elapsed_ms);
     state.m2_rpm_x10 = counts_to_rpm_x10(current_m2 - state.previous_m2,
@@ -632,6 +641,44 @@ void update_encoder_rpm(EncoderRpmState &state) {
         printf("\n");
         state.previous_print_us = now_us;
     }
+
+    return true;
+}
+
+struct WheelSpeedControlState {
+    float m1_integral = 0.0f;
+    float m2_integral = 0.0f;
+};
+
+int calculate_speed_command(float measured_rpm,
+                            float sample_seconds,
+                            float &speed_integral) {
+    float error = TARGET_WHEEL_RPM - measured_rpm;
+    speed_integral += error * sample_seconds;
+    speed_integral = clamp_float(speed_integral,
+                                 -SPEED_INTEGRAL_LIMIT,
+                                 SPEED_INTEGRAL_LIMIT);
+
+    float command = BASE_SPEED_PERCENT +
+                    SPEED_KP * error +
+                    SPEED_KI * speed_integral;
+    return clamp_int(static_cast<int>(std::round(command)), 0, 100);
+}
+
+void update_wheel_speed_control(const EncoderRpmState &rpm,
+                                WheelSpeedControlState &control) {
+    float m1_rpm = rpm.m1_rpm_x10 / 10.0f;
+    float m2_rpm = rpm.m2_rpm_x10 / 10.0f;
+
+    int m1_command = calculate_speed_command(m1_rpm,
+                                             rpm.sample_seconds,
+                                             control.m1_integral);
+    int m2_command = calculate_speed_command(m2_rpm,
+                                             rpm.sample_seconds,
+                                             control.m2_integral);
+
+    motor1_set_percent(m1_command);
+    motor2_set_percent(m2_command);
 }
 
 void run_drive_step(const char *name,
@@ -856,29 +903,21 @@ void check_serial_timeout(SerialDriveState &state, uint32_t timeout_ms) {
 
 //------------------------Main Loop-------------------------//
 int main() {
-    constexpr uint32_t SERIAL_COMMAND_TIMEOUT_MS = 1000;
-
     stdio_init_all();
     setup_gpio();
     sleep_ms(3000);
 
-    printf("Pico ready. Send D,error,base_speed (example D,-25.5,30).\n");
-    printf("Send PID,kp,ki,kd to tune gains (example PID,0.2,0.0,0.1).\n");
-    printf("Send S to stop.\n");
-
-    char line[SERIAL_BUFFER_SIZE];
-    SerialDriveState state;
     EncoderRpmState rpm_state;
+    WheelSpeedControlState speed_control;
     initialize_encoder_rpm(rpm_state);
 
-    while (true) {
-        if (read_serial_line(line, SERIAL_BUFFER_SIZE)) {
-            handle_serial_command(line, state);
-        }
+    printf("Closed-loop target: %.1f RPM per wheel.\n", TARGET_WHEEL_RPM);
+    drive_forward(BASE_SPEED_PERCENT);
 
-        check_serial_timeout(state, SERIAL_COMMAND_TIMEOUT_MS);
-        update_encoder_rpm(rpm_state);
-        set_status_led(state.timeout_active);
+    while (true) {
+        if (update_encoder_rpm(rpm_state)) {
+            update_wheel_speed_control(rpm_state, speed_control);
+        }
         sleep_ms(5);
     }
 }
