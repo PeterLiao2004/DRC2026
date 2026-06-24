@@ -59,7 +59,9 @@ void encoder_gpio_callback(uint gpio, uint32_t events) {
         m1_encoder_state = current;
     } else if (gpio == M2_ENCODER_A || gpio == M2_ENCODER_B) {
         uint8_t current = read_encoder_state(M2_ENCODER_A, M2_ENCODER_B);
-        m2_encoder_count += QUADRATURE_DELTA[(m2_encoder_state << 2) | current];
+        // Motor 2 is mounted/wired in the opposite direction, so invert its
+        // encoder delta to keep positive counts consistent between motors.
+        m2_encoder_count -= QUADRATURE_DELTA[(m2_encoder_state << 2) | current];
         m2_encoder_state = current;
     }
 }
@@ -202,6 +204,22 @@ void print_rpm(int motor, int32_t delta_counts) {
            static_cast<long>(rpm_x10 / 10),
            static_cast<long>(rpm_x10 % 10));
 }
+
+// Prints cumulative wheel rotations to three decimal places without requiring
+// floating-point printf support.
+void print_rotations(const char *motor, int32_t counts) {
+    int64_t rotations_x1000 =
+        (static_cast<int64_t>(counts) * 1000) / ENCODER_COUNTS_PER_REV;
+    uint64_t magnitude = rotations_x1000 < 0
+        ? static_cast<uint64_t>(-rotations_x1000)
+        : static_cast<uint64_t>(rotations_x1000);
+
+    printf("%s: %s%llu.%03llu rotations",
+           motor,
+           rotations_x1000 < 0 ? "-" : "",
+           static_cast<unsigned long long>(magnitude / 1000),
+           static_cast<unsigned long long>(magnitude % 1000));
+}
 //------------------------Main Loop-------------------------//
 int main() {
     // Initialize stdio for printf debugging (over USB).
@@ -222,8 +240,8 @@ int main() {
     int32_t last_m1 = 0;
     int32_t last_m2 = 0;
 
-    printf("\nManual encoder test\n");
-    printf("Rotate either wheel by hand. Press R to reset the counts.\n");
+    printf("\nManual wheel rotation test\n");
+    printf("Rotate either wheel by hand. Press R to reset the rotations.\n");
 
     while (true) {
         int input = getchar_timeout_us(0);
@@ -231,7 +249,7 @@ int main() {
             reset_encoder_counts();
             last_m1 = 0;
             last_m2 = 0;
-            printf("Counts reset: M1 = 0, M2 = 0\n");
+            printf("Rotations reset: M1 = 0.000, M2 = 0.000\n");
         }
 
         int32_t m1;
@@ -239,9 +257,10 @@ int main() {
         read_encoder_counts(m1, m2);
 
         if (m1 != last_m1 || m2 != last_m2) {
-            printf("M1: %ld\tM2: %ld\n",
-                   static_cast<long>(m1),
-                   static_cast<long>(m2));
+            print_rotations("M1", m1);
+            printf("\t");
+            print_rotations("M2", m2);
+            printf("\n");
             last_m1 = m1;
             last_m2 = m2;
         }
