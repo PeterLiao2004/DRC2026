@@ -54,7 +54,8 @@
 #define MIN_PWM 350
 #define MAX_PWM 1000
 #define ENCODER_COUNTS_PER_REV 893
-#define RPM_SAMPLE_MS 500
+#define RPM_SAMPLE_MS 50
+#define RPM_PRINT_MS 500
 #define SAMPLES_PER_LEVEL 8
 
 // Speed/PID control settings
@@ -575,8 +576,7 @@ void pid_drive(float error, int base_speed) {
 
 //------------------------Testing/Helpers -------------------------//
 // Prints signed RPM to one decimal place without floating-point printf support.
-void print_rpm(int motor, int32_t delta_counts, uint32_t sample_ms) {
-    int32_t rpm_x10 = counts_to_rpm_x10(delta_counts, sample_ms);
+void print_rpm(int motor, int32_t rpm_x10) {
     int64_t magnitude = rpm_x10 < 0
         ? -static_cast<int64_t>(rpm_x10)
         : static_cast<int64_t>(rpm_x10);
@@ -592,14 +592,18 @@ struct EncoderRpmState {
     int32_t previous_m1 = 0;
     int32_t previous_m2 = 0;
     uint64_t previous_sample_us = 0;
+    uint64_t previous_print_us = 0;
+    int32_t m1_rpm_x10 = 0;
+    int32_t m2_rpm_x10 = 0;
 };
 
 void initialize_encoder_rpm(EncoderRpmState &state) {
     read_encoder_counts(state.previous_m1, state.previous_m2);
     state.previous_sample_us = time_us_64();
+    state.previous_print_us = state.previous_sample_us;
 }
 
-void print_encoder_rpm_if_due(EncoderRpmState &state) {
+void update_encoder_rpm(EncoderRpmState &state) {
     uint64_t now_us = time_us_64();
     uint64_t elapsed_us = now_us - state.previous_sample_us;
     if (elapsed_us < static_cast<uint64_t>(RPM_SAMPLE_MS) * 1000) {
@@ -611,14 +615,23 @@ void print_encoder_rpm_if_due(EncoderRpmState &state) {
     read_encoder_counts(current_m1, current_m2);
 
     uint32_t elapsed_ms = static_cast<uint32_t>(elapsed_us / 1000);
-    print_rpm(1, current_m1 - state.previous_m1, elapsed_ms);
-    printf("\t");
-    print_rpm(2, current_m2 - state.previous_m2, elapsed_ms);
-    printf("\n");
+    state.m1_rpm_x10 = counts_to_rpm_x10(current_m1 - state.previous_m1,
+                                         elapsed_ms);
+    state.m2_rpm_x10 = counts_to_rpm_x10(current_m2 - state.previous_m2,
+                                         elapsed_ms);
 
     state.previous_m1 = current_m1;
     state.previous_m2 = current_m2;
     state.previous_sample_us = now_us;
+
+    if (now_us - state.previous_print_us >=
+        static_cast<uint64_t>(RPM_PRINT_MS) * 1000) {
+        print_rpm(1, state.m1_rpm_x10);
+        printf("\t");
+        print_rpm(2, state.m2_rpm_x10);
+        printf("\n");
+        state.previous_print_us = now_us;
+    }
 }
 
 void run_drive_step(const char *name,
@@ -843,7 +856,7 @@ void check_serial_timeout(SerialDriveState &state, uint32_t timeout_ms) {
 
 //------------------------Main Loop-------------------------//
 int main() {
-    constexpr uint32_t SERIAL_COMMAND_TIMEOUT_MS = 500;
+    constexpr uint32_t SERIAL_COMMAND_TIMEOUT_MS = 1000;
 
     stdio_init_all();
     setup_gpio();
@@ -864,7 +877,7 @@ int main() {
         }
 
         check_serial_timeout(state, SERIAL_COMMAND_TIMEOUT_MS);
-        print_encoder_rpm_if_due(rpm_state);
+        update_encoder_rpm(rpm_state);
         set_status_led(state.timeout_active);
         sleep_ms(5);
     }
