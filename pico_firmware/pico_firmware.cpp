@@ -58,9 +58,9 @@
 #define SAMPLES_PER_LEVEL 8
 
 // Speed/PID control settings
-#define KP 0.3f
-#define KI 0.0f
-#define KD 0.2f
+#define LINE_KP 0.2f
+#define LINE_KI 0.0f
+#define LINE_KD 0.3f
 #define DERIVATIVE_FILTER_ALPHA 0.2f
 #define INTEGRAL_LIMIT 200.0f
 
@@ -183,6 +183,23 @@ float clamp_float(float value, float min_value, float max_value) {
     if (value < min_value) return min_value;
     if (value > max_value) return max_value;
     return value;
+}
+
+float map_range(float value,
+                float input_min,
+                float input_max,
+                float output_min,
+                float output_max) {
+    const float input_range = input_max - input_min;
+
+    if (input_range == 0.0f) {
+        return output_min;
+    }
+
+    const float normalized_value = (value - input_min) / input_range;
+    const float output_range = output_max - output_min;
+
+    return output_min + normalized_value * output_range;
 }
 
 //--------------------Serial Communication------------------//
@@ -472,9 +489,9 @@ void pid_drive(float error, int base_speed) {
     last_control_time_us = now_us;
     derivative_initialized = true;
 
-    float p_term = KP * error;
-    float i_term = KI * integral;
-    float d_term = KD * derivative;
+    float p_term = LINE_KP * error;
+    float i_term = LINE_KI * integral;
+    float d_term = LINE_KD * derivative;
     int correction = static_cast<int>(std::round(p_term + i_term + d_term));
     correction = clamp_int(correction, -100, 100);
 
