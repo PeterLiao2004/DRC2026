@@ -30,8 +30,8 @@ picam2.start()
 # upper = np.array([255,255,179])
 
 # Custom start vals:
-lower = np.array([24, 42, 175])
-upper = np.array([32, 169, 255])
+lower = np.array([20, 16, 73])
+upper = np.array([77, 47, 166])
 
 
 # Create trackbars for HSV range adjustment
