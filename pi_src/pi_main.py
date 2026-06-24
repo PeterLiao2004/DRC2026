@@ -58,7 +58,7 @@ picam2.start()
 # GREEN_UPPER = np.array([59, 209, 104])
 
 # UNI TRACK:
-YELLOW_LOWER = np.array([24, 42, 175])
+YELLOW_LOWER = np.array([25, 50, 175])
 YELLOW_UPPER = np.array([32, 169, 255])
 
 BLUE_LOWER = np.array([68, 18, 169])
@@ -103,6 +103,8 @@ OBSTACLE_LATCH_TIME = 0.7
 obstacle_avoid_side = None
 last_obstacle_seen_time = -999.0
 
+OBSTACLE_SIDE_DEADBAND = 45
+
 # ------------------------
 # Driving settings
 # ------------------------
@@ -134,16 +136,25 @@ Kd = 0.11
 # ------------------------
 
 green_seen_start_time = None
-GREEN_STOP_DELAY = 2
+GREEN_STOP_DELAY = 2.5
 robot_stopped_by_green = False
+
+# Ignore green for the first 30 seconds after starting
+GREEN_IGNORE_TIME = 30
+robot_start_time = time.time()
 
 # -----------------------------
 # Arrow detection settings
 # -----------------------------
 
 # Minimum arrow blob size
-MIN_AREA_FRAC = 0.003
+MIN_AREA_FRAC = 0.004
 MIN_AREA = int(FRAME_W * FRAME_H * MIN_AREA_FRAC)
+
+# Maximum arrow blob size
+# Rejects huge blobs like the floor/ground being detected as arrow colour.
+MAX_AREA_FRAC = 0.08
+MAX_AREA = int(FRAME_W * FRAME_H * MAX_AREA_FRAC)
 
 # Mask cleaning
 ARROW_KERNEL = np.ones((3, 3), np.uint8)
@@ -294,7 +305,7 @@ def find_largest_arrow_contour(mask):
     for contour in contours:
         area = cv2.contourArea(contour)
 
-        if area < MIN_AREA:
+        if area < MIN_AREA or area > MAX_AREA:
             continue
 
         x, y, w, h = cv2.boundingRect(contour)
@@ -629,7 +640,16 @@ try:
         green_mask = mask_and_clean(hsv, GREEN_LOWER, GREEN_UPPER)
         purple_mask = mask_and_clean(hsv, PURPLE_LOWER, PURPLE_UPPER)
 
-        finish_line_seen, green_box = detect_green_finish_line(green_mask)
+        # Ignore green for the first 30 seconds
+        green_ignore_elapsed = current_time - robot_start_time
+        green_detection_enabled = green_ignore_elapsed >= GREEN_IGNORE_TIME
+
+        if green_detection_enabled:
+            finish_line_seen, green_box = detect_green_finish_line(green_mask)
+        else:
+            finish_line_seen = False
+            green_box = None
+
         obstacle_seen, obstacle_box = detect_purple_obstacle(purple_mask)
 
         # -----------------------------
@@ -711,39 +731,51 @@ try:
             if obstacle_near_lookahead:
                 last_obstacle_seen_time = current_time
 
-                # Use current lane centre to decide side, not distance to lines.
-                # This is more stable.
+                # -----------------------------
+                # Choose which side of the lane the obstacle is on
+                # -----------------------------
+
+                # Estimate the lane centre as best as possible
                 if lane_centre_x is not None:
                     reference_centre = lane_centre_x
+
+                elif yellow_x is not None and last_lane_width is not None:
+                    reference_centre = yellow_x + last_lane_width / 2
+
+                elif blue_x is not None and last_lane_width is not None:
+                    reference_centre = blue_x - last_lane_width / 2
+
                 else:
                     reference_centre = FRAME_W / 2
 
-                # Only choose a new side if we are not already avoiding one
-                if obstacle_avoid_side is None:
 
-                    # If only yellow is visible, assume the obstacle is on/near the yellow side.
-                    # Do NOT choose blue-side avoidance, because that would drive left across yellow.
-                    if yellow_x is not None and blue_x is None:
-                        obstacle_avoid_side = "YELLOW_SIDE"
-
-                    # If only blue is visible, assume the obstacle is on/near the blue side.
-                    # Do NOT choose yellow-side avoidance, because that would drive right across blue.
-                    elif blue_x is not None and yellow_x is None:
-                        obstacle_avoid_side = "BLUE_SIDE"
-
-                    # If both lines are visible, choose based on which line the purple block is closer to.
-                    elif yellow_x is not None and blue_x is not None:
-                        if abs(pcx - yellow_x) < abs(pcx - blue_x):
-                            obstacle_avoid_side = "YELLOW_SIDE"
-                        else:
-                            obstacle_avoid_side = "BLUE_SIDE"
-
-                    # Last resort only
+                # If both lines are visible, use distance to the actual lines
+                if yellow_x is not None and blue_x is not None:
+                    if abs(pcx - yellow_x) < abs(pcx - blue_x):
+                        new_obstacle_side = "YELLOW_SIDE"
                     else:
-                        if pcx < reference_centre:
-                            obstacle_avoid_side = "YELLOW_SIDE"
+                        new_obstacle_side = "BLUE_SIDE"
+
+                # If only one line is visible, use obstacle position relative to estimated lane centre
+                else:
+                    if pcx < reference_centre - OBSTACLE_SIDE_DEADBAND:
+                        new_obstacle_side = "YELLOW_SIDE"
+
+                    elif pcx > reference_centre + OBSTACLE_SIDE_DEADBAND:
+                        new_obstacle_side = "BLUE_SIDE"
+
+                    else:
+                        # If the obstacle is near the middle, keep old side if possible
+                        if obstacle_avoid_side is not None:
+                            new_obstacle_side = obstacle_avoid_side
+                        elif pcx < FRAME_W / 2:
+                            new_obstacle_side = "YELLOW_SIDE"
                         else:
-                            obstacle_avoid_side = "BLUE_SIDE"
+                            new_obstacle_side = "BLUE_SIDE"
+
+
+                # Update the chosen obstacle side
+                obstacle_avoid_side = new_obstacle_side
 
                 # -----------------------------
                 # Purple is on yellow/left side
@@ -759,11 +791,19 @@ try:
                         line_recovery_mode = False
                         obstacle_side = "YELLOW_SIDE_CLEARANCE"
 
-                    elif last_lane_width is not None:
+                    elif last_lane_width is not None and blue_x is None:
                         lane_centre_x = safe_left_boundary + last_lane_width / 2
                         avoiding_obstacle = True
                         line_recovery_mode = False
                         obstacle_side = "YELLOW_SIDE_CLEARANCE_EST"
+
+                    elif blue_x is not None:
+                        # The right-side path is blocked by the blue line,
+                        # so do not keep steering right.
+                        error = -RECOVERY_ERROR
+                        line_recovery_mode = True
+                        avoiding_obstacle = True
+                        obstacle_side = "YELLOW_SIDE_BLOCKED_PUSH_LEFT"
 
                     else:
                         # Emergency: steer right away from purple
@@ -786,11 +826,19 @@ try:
                         line_recovery_mode = False
                         obstacle_side = "BLUE_SIDE_CLEARANCE"
 
-                    elif last_lane_width is not None:
+                    elif last_lane_width is not None and yellow_x is None:
                         lane_centre_x = safe_right_boundary - last_lane_width / 2
                         avoiding_obstacle = True
                         line_recovery_mode = False
                         obstacle_side = "BLUE_SIDE_CLEARANCE_EST"
+
+                    elif yellow_x is not None:
+                        # The left-side path is blocked by the yellow line,
+                        # so do not keep steering left.
+                        error = RECOVERY_ERROR
+                        line_recovery_mode = True
+                        avoiding_obstacle = True
+                        obstacle_side = "BLUE_SIDE_BLOCKED_PUSH_RIGHT"
 
                     else:
                         # Emergency: steer left away from purple
