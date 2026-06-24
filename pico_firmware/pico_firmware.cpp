@@ -322,7 +322,8 @@ void encoder_gpio_callback(uint gpio, uint32_t events) {
         m1_encoder_state = current;
     } else if (gpio == M2_ENCODER_A || gpio == M2_ENCODER_B) {
         uint8_t current = read_encoder_state(M2_ENCODER_A, M2_ENCODER_B);
-        m2_encoder_count += QUADRATURE_DELTA[(m2_encoder_state << 2) | current];
+        // Invert M2 so forward wheel movement has the same sign as M1.
+        m2_encoder_count -= QUADRATURE_DELTA[(m2_encoder_state << 2) | current];
         m2_encoder_state = current;
     }
 }
@@ -357,10 +358,11 @@ void read_encoder_counts(int32_t &m1, int32_t &m2) {
 
 // Converts change in encoder counts over a sample period to RPM x10 (to avoid floating-point).
 int32_t counts_to_rpm_x10(int32_t delta_counts, uint32_t sample_ms) {
-    // RPM x10 avoids relying on floating-point printf support.
-    int64_t magnitude = delta_counts < 0 ? -(int64_t)delta_counts : delta_counts;
-    return static_cast<int32_t>((magnitude * 600000) /
-                                (ENCODER_COUNTS_PER_REV * sample_ms));
+    // RPM x10 avoids relying on floating-point printf support while retaining
+    // the direction of travel.
+    return static_cast<int32_t>(
+        (static_cast<int64_t>(delta_counts) * 600000) /
+        (static_cast<int64_t>(ENCODER_COUNTS_PER_REV) * sample_ms));
 }
 //----------------------------------------------------//
 //-------------------PWM/Motor Control------------------//
@@ -572,14 +574,51 @@ void pid_drive(float error, int base_speed) {
 }
 
 //------------------------Testing/Helpers -------------------------//
-// Helper function to print RPM in a human-friendly format.
-void print_rpm(int motor, int32_t delta_counts) {
-    int32_t rpm_x10 = counts_to_rpm_x10(delta_counts, RPM_SAMPLE_MS);
-    printf("M%d: %ld counts, %ld.%01ld RPM",
+// Prints signed RPM to one decimal place without floating-point printf support.
+void print_rpm(int motor, int32_t delta_counts, uint32_t sample_ms) {
+    int32_t rpm_x10 = counts_to_rpm_x10(delta_counts, sample_ms);
+    int64_t magnitude = rpm_x10 < 0
+        ? -static_cast<int64_t>(rpm_x10)
+        : static_cast<int64_t>(rpm_x10);
+
+    printf("M%d RPM: %s%lld.%01lld",
            motor,
-           static_cast<long>(delta_counts),
-           static_cast<long>(rpm_x10 / 10),
-           static_cast<long>(rpm_x10 % 10));
+           rpm_x10 < 0 ? "-" : "",
+           static_cast<long long>(magnitude / 10),
+           static_cast<long long>(magnitude % 10));
+}
+
+struct EncoderRpmState {
+    int32_t previous_m1 = 0;
+    int32_t previous_m2 = 0;
+    uint64_t previous_sample_us = 0;
+};
+
+void initialize_encoder_rpm(EncoderRpmState &state) {
+    read_encoder_counts(state.previous_m1, state.previous_m2);
+    state.previous_sample_us = time_us_64();
+}
+
+void print_encoder_rpm_if_due(EncoderRpmState &state) {
+    uint64_t now_us = time_us_64();
+    uint64_t elapsed_us = now_us - state.previous_sample_us;
+    if (elapsed_us < static_cast<uint64_t>(RPM_SAMPLE_MS) * 1000) {
+        return;
+    }
+
+    int32_t current_m1;
+    int32_t current_m2;
+    read_encoder_counts(current_m1, current_m2);
+
+    uint32_t elapsed_ms = static_cast<uint32_t>(elapsed_us / 1000);
+    print_rpm(1, current_m1 - state.previous_m1, elapsed_ms);
+    printf("\t");
+    print_rpm(2, current_m2 - state.previous_m2, elapsed_ms);
+    printf("\n");
+
+    state.previous_m1 = current_m1;
+    state.previous_m2 = current_m2;
+    state.previous_sample_us = now_us;
 }
 
 void run_drive_step(const char *name,
@@ -816,6 +855,8 @@ int main() {
 
     char line[SERIAL_BUFFER_SIZE];
     SerialDriveState state;
+    EncoderRpmState rpm_state;
+    initialize_encoder_rpm(rpm_state);
 
     while (true) {
         if (read_serial_line(line, SERIAL_BUFFER_SIZE)) {
@@ -823,6 +864,7 @@ int main() {
         }
 
         check_serial_timeout(state, SERIAL_COMMAND_TIMEOUT_MS);
+        print_encoder_rpm_if_due(rpm_state);
         set_status_led(state.timeout_active);
         sleep_ms(5);
     }
