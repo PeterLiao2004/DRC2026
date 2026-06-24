@@ -52,7 +52,7 @@
 // PWM settings
 #define PWM_WRAP 1000
 #define MIN_PWM 350
-#define MAX_PWM 1000
+#define MAX_PWM 900
 #define ENCODER_COUNTS_PER_REV 893
 #define RPM_SAMPLE_MS 50
 #define RPM_PRINT_MS 500
@@ -79,13 +79,16 @@ bool derivative_initialized = false;
 
 // Simple encoder speed-control settings. These gains are PWM-percent per RPM
 // and PWM-percent per RPM-second respectively.
-#define TARGET_WHEEL_RPM 100.0f
+#define MIN_TARGET_RPM 80.0f
+#define MAX_TARGET_RPM 340.0f
 #define SPEED_KP 0.3f
 #define SPEED_KI 0.6f
 #define SPEED_INTEGRAL_LIMIT 50.0f
 
 // How much to reduce base speed at maximum error (100% error = 40% of base speed). This allows more time for correction when the error is large.
 float min_factor = 1.0f;
+float m1_target_rpm = 0.0f;
+float m2_target_rpm = 0.0f;
 
 // Signed x4 quadrature counts (every A/B edge is counted).
 volatile int32_t m1_encoder_count = 0;
@@ -442,6 +445,8 @@ void set_motion_indicators(bool forward_on, bool reverse_on) {
 }
 
 void stop_all() {
+    m1_target_rpm = 0.0f;
+    m2_target_rpm = 0.0f;
     motor1_set_percent(0);
     motor2_set_percent(0);
     set_turn_indicators(false, false);
@@ -486,6 +491,17 @@ void turn_right(int speed_percent) {
 }
 
 //-------------------Speed/PID Control ---------------------------------//
+float speed_percent_to_target_rpm(int speed_percent) {
+    if (speed_percent == 0) {
+        return 0.0f;
+    }
+
+    float direction = speed_percent < 0 ? -1.0f : 1.0f;
+    float magnitude = (abs(speed_percent) / 100.0f) * MAX_TARGET_RPM;
+    magnitude = clamp_float(magnitude, MIN_TARGET_RPM, MAX_TARGET_RPM);
+    return direction * magnitude;
+}
+
 // Speed based on error magnitude: higher error = slower base speed, to allow more correction time.
 int calculate_scaled_speed(int error, int base_speed) {
     // error: -100 to +100
@@ -573,12 +589,13 @@ void pid_drive(float error, int base_speed) {
         set_motion_indicators(false, false);
     }
 
-    // Your motors are mounted opposite directions
-    motor1_set_percent(left_speed);
-    motor2_set_percent(right_speed);
+    // Convert the steering controller's percentage outputs into bounded RPM
+    // targets. The encoder PI controller produces the actual motor PWM.
+    m1_target_rpm = speed_percent_to_target_rpm(left_speed);
+    m2_target_rpm = speed_percent_to_target_rpm(right_speed);
 
-    printf("error: %.2f, P: %.2f, I: %.2f, D: %.2f, base: %d, left: %d, right: %d\n",
-           error, p_term, i_term, d_term, scaled_speed, left_speed, right_speed);
+    printf("error: %.2f, P: %.2f, I: %.2f, D: %.2f, left target: %.1f RPM, right target: %.1f RPM\n",
+           error, p_term, i_term, d_term, m1_target_rpm, m2_target_rpm);
 }
 
 //------------------------Testing/Helpers -------------------------//
@@ -650,19 +667,28 @@ struct WheelSpeedControlState {
     float m2_integral = 0.0f;
 };
 
-int calculate_speed_command(float measured_rpm,
+int calculate_speed_command(float target_rpm,
+                            float measured_rpm,
                             float sample_seconds,
                             float &speed_integral) {
-    float error = TARGET_WHEEL_RPM - measured_rpm;
+    if (target_rpm == 0.0f) {
+        speed_integral = 0.0f;
+        return 0;
+    }
+
+    float error = target_rpm - measured_rpm;
     speed_integral += error * sample_seconds;
     speed_integral = clamp_float(speed_integral,
                                  -SPEED_INTEGRAL_LIMIT,
                                  SPEED_INTEGRAL_LIMIT);
 
-    float command = BASE_SPEED_PERCENT +
+    float feed_forward = target_rpm < 0.0f
+        ? -static_cast<float>(BASE_SPEED_PERCENT)
+        : static_cast<float>(BASE_SPEED_PERCENT);
+    float command = feed_forward +
                     SPEED_KP * error +
                     SPEED_KI * speed_integral;
-    return clamp_int(static_cast<int>(std::round(command)), 0, 100);
+    return clamp_int(static_cast<int>(std::round(command)), -100, 100);
 }
 
 void update_wheel_speed_control(const EncoderRpmState &rpm,
@@ -670,10 +696,12 @@ void update_wheel_speed_control(const EncoderRpmState &rpm,
     float m1_rpm = rpm.m1_rpm_x10 / 10.0f;
     float m2_rpm = rpm.m2_rpm_x10 / 10.0f;
 
-    int m1_command = calculate_speed_command(m1_rpm,
+    int m1_command = calculate_speed_command(m1_target_rpm,
+                                             m1_rpm,
                                              rpm.sample_seconds,
                                              control.m1_integral);
-    int m2_command = calculate_speed_command(m2_rpm,
+    int m2_command = calculate_speed_command(m2_target_rpm,
+                                             m2_rpm,
                                              rpm.sample_seconds,
                                              control.m2_integral);
 
@@ -903,21 +931,32 @@ void check_serial_timeout(SerialDriveState &state, uint32_t timeout_ms) {
 
 //------------------------Main Loop-------------------------//
 int main() {
+    constexpr uint32_t SERIAL_COMMAND_TIMEOUT_MS = 1000;
+
     stdio_init_all();
     setup_gpio();
     sleep_ms(3000);
 
+    printf("Pico ready. Send D,error,base_speed (example D,-25.5,30).\n");
+    printf("Send PID,kp,ki,kd to tune steering gains.\n");
+    printf("Send S to stop.\n");
+
+    char line[SERIAL_BUFFER_SIZE];
+    SerialDriveState serial_state;
     EncoderRpmState rpm_state;
     WheelSpeedControlState speed_control;
     initialize_encoder_rpm(rpm_state);
 
-    printf("Closed-loop target: %.1f RPM per wheel.\n", TARGET_WHEEL_RPM);
-    drive_forward(BASE_SPEED_PERCENT);
-
     while (true) {
+        if (read_serial_line(line, SERIAL_BUFFER_SIZE)) {
+            handle_serial_command(line, serial_state);
+        }
+
+        check_serial_timeout(serial_state, SERIAL_COMMAND_TIMEOUT_MS);
         if (update_encoder_rpm(rpm_state)) {
             update_wheel_speed_control(rpm_state, speed_control);
         }
+        set_status_led(serial_state.timeout_active);
         sleep_ms(5);
     }
 }
