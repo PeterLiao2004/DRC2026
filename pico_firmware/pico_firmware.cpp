@@ -60,7 +60,7 @@
 // Speed/PID control settings
 #define LINE_KP 0.2f
 #define LINE_KI 0.0f
-#define LINE_KD 0.3f
+#define LINE_KD 0.1f
 #define DERIVATIVE_FILTER_ALPHA 0.2f
 #define INTEGRAL_LIMIT 200.0f
 
