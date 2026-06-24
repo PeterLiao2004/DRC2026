@@ -23,8 +23,7 @@ picam2 = Picamera2()
 
 config = picam2.create_video_configuration(
     main={"format": "RGB888", "size": (FRAME_W, FRAME_H)},
-    controls={"FrameRate": FPS_TARGET},
-    raw={"size": (2304, 1296)}
+    controls={"FrameRate": FPS_TARGET}
 )
 
 picam2.configure(config)
@@ -59,11 +58,11 @@ picam2.start()
 # GREEN_UPPER = np.array([59, 209, 104])
 
 # UNI TRACK:
-YELLOW_LOWER = np.array([24, 41, 179])
-YELLOW_UPPER = np.array([32, 167, 255])
+YELLOW_LOWER = np.array([24, 42, 175])
+YELLOW_UPPER = np.array([32, 169, 255])
 
-BLUE_LOWER = np.array([59, 0, 143])
-BLUE_UPPER = np.array([120, 236, 255])
+BLUE_LOWER = np.array([68, 18, 169])
+BLUE_UPPER = np.array([107, 224, 255])
 
 GREEN_LOWER = np.array([41, 28, 183])
 GREEN_UPPER = np.array([84, 129, 255])
@@ -71,8 +70,8 @@ GREEN_UPPER = np.array([84, 129, 255])
 PURPLE_LOWER = np.array([155, 73, 70])
 PURPLE_UPPER = np.array([179, 173, 166])
 
-ARROW_LOWER = np.array([27, 0, 42])
-ARROW_UPPER = np.array([107, 48, 162])
+ARROW_LOWER = np.array([20, 16, 73])
+ARROW_UPPER = np.array([77, 47, 166])
 
 # -----------------------------
 # Line following settings
@@ -135,7 +134,7 @@ Kd = 0.14
 # ------------------------
 
 green_seen_start_time = None
-GREEN_STOP_DELAY = 2.5
+GREEN_STOP_DELAY = 2
 robot_stopped_by_green = False
 
 # -----------------------------
@@ -170,16 +169,16 @@ MAX_ASPECT_RATIO = 4.0
 # Arrow bias timing
 ARROW_WAIT_TIME = 1.2
 ARROW_STRONG_TIME = 1.0
-ARROW_MODERATE_TIME = 0.9
-ARROW_WEAK_TIME = 1.3
+ARROW_MODERATE_TIME = 1.7
+ARROW_WEAK_TIME = 1.2
 
 # Arrow bias strength
 # These values are normalised error values.
 # 0.95 becomes about 95 after multiplying by 100.
 ARROW_WAIT_BIAS = 0.02
-ARROW_STRONG_BIAS = 0.8
-ARROW_MODERATE_BIAS = 0.50
-ARROW_WEAK_BIAS = 0.25
+ARROW_STRONG_BIAS = 0.75
+ARROW_MODERATE_BIAS = 0.45
+ARROW_WEAK_BIAS = 0.2
 
 # Positive error should turn right.
 # If the robot turns the wrong way, change this to -1.
