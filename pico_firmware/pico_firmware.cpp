@@ -58,11 +58,13 @@
 #define SAMPLES_PER_LEVEL 8
 
 // Speed/PID control settings
-#define LINE_KP 0.2f
-#define LINE_KI 0.0f
-#define LINE_KD 0.1f
 #define DERIVATIVE_FILTER_ALPHA 0.2f
 #define INTEGRAL_LIMIT 200.0f
+#define MAX_PID_GAIN 10.0f
+
+float line_kp = 0.2f;
+float line_ki = 0.0f;
+float line_kd = 0.1f;
 
 float last_error = 0.0f;
 float integral = 0.0f;
@@ -260,6 +262,49 @@ bool parse_drive_command(const char *line, float &error, int &base_speed) {
 
     base_speed = static_cast<int>(parsed_speed);
     return true;
+}
+
+bool parse_float_field(const char *&cursor, float &value, bool final_field) {
+    char *end = nullptr;
+    value = std::strtof(cursor, &end);
+
+    if (end == cursor || !std::isfinite(value)) {
+        return false;
+    }
+
+    while (*end == ' ' || *end == '\t') ++end;
+
+    if (final_field) {
+        return *end == '\0';
+    }
+
+    if (*end != ',') {
+        return false;
+    }
+
+    cursor = end + 1;
+    return true;
+}
+
+bool parse_pid_command(const char *line, float &kp, float &ki, float &kd) {
+    bool valid_prefix =
+        (line[0] == 'P' && line[1] == 'I' && line[2] == 'D' && line[3] == ',') ||
+        (line[0] == 'p' && line[1] == 'i' && line[2] == 'd' && line[3] == ',');
+
+    if (!valid_prefix) {
+        return false;
+    }
+
+    const char *cursor = line + 4;
+    if (!parse_float_field(cursor, kp, false) ||
+        !parse_float_field(cursor, ki, false) ||
+        !parse_float_field(cursor, kd, true)) {
+        return false;
+    }
+
+    return kp >= 0.0f && kp <= MAX_PID_GAIN &&
+           ki >= 0.0f && ki <= MAX_PID_GAIN &&
+           kd >= 0.0f && kd <= MAX_PID_GAIN;
 }
 
 //-------------------Encoder Handling------------------//
@@ -489,9 +534,9 @@ void pid_drive(float error, int base_speed) {
     last_control_time_us = now_us;
     derivative_initialized = true;
 
-    float p_term = LINE_KP * error;
-    float i_term = LINE_KI * integral;
-    float d_term = LINE_KD * derivative;
+    float p_term = line_kp * error;
+    float i_term = line_ki * integral;
+    float d_term = line_kd * derivative;
     int correction = static_cast<int>(std::round(p_term + i_term + d_term));
     correction = clamp_int(correction, -100, 100);
 
@@ -787,6 +832,7 @@ int main() {
     //--------------------------------------------------//
 
     printf("Pico ready. Send D,error,base_speed (example D,-25.5,30).\n");
+    printf("Send PID,kp,ki,kd to tune gains (example PID,0.2,0.0,0.1).\n");
     printf("Send S to stop, or K/KB/KEYBOARD for keyboard mode.\n");
 
     char line[SERIAL_BUFFER_SIZE];
@@ -821,20 +867,36 @@ int main() {
                 drive_command_active = false;
                 printf("Stopped\n");
             } else {
-                float error;
-                int base_speed;
+                float new_kp;
+                float new_ki;
+                float new_kd;
 
-                if (parse_drive_command(line, error, base_speed)) {
-                    pid_drive(error, base_speed);
-                    drive_command_active = base_speed > 0;
-                    last_drive_command_ms = to_ms_since_boot(get_absolute_time());
-                    printf("Drive command: error %.2f, base speed %d%%\n",
-                           error,
-                           base_speed);
-                } else {
+                if (parse_pid_command(line, new_kp, new_ki, new_kd)) {
                     stop_all();
                     drive_command_active = false;
-                    printf("Invalid command. Expected D,error,base_speed\n");
+                    line_kp = new_kp;
+                    line_ki = new_ki;
+                    line_kd = new_kd;
+                    printf("PID gains updated: Kp=%.4f, Ki=%.4f, Kd=%.4f\n",
+                           line_kp,
+                           line_ki,
+                           line_kd);
+                } else {
+                    float error;
+                    int base_speed;
+
+                    if (parse_drive_command(line, error, base_speed)) {
+                        pid_drive(error, base_speed);
+                        drive_command_active = base_speed > 0;
+                        last_drive_command_ms = to_ms_since_boot(get_absolute_time());
+                        printf("Drive command: error %.2f, base speed %d%%\n",
+                               error,
+                               base_speed);
+                    } else {
+                        stop_all();
+                        drive_command_active = false;
+                        printf("Invalid command. Expected D,error,base_speed or PID,kp,ki,kd\n");
+                    }
                 }
             }
         }
