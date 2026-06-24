@@ -79,9 +79,9 @@ bool derivative_initialized = false;
 
 // Simple encoder speed-control settings. These gains are PWM-percent per RPM
 // and PWM-percent per RPM-second respectively.
-#define TARGET_WHEEL_RPM 60.0f
-#define SPEED_KP 0.1f
-#define SPEED_KI 0.0f
+#define TARGET_WHEEL_RPM 100.0f
+#define SPEED_KP 0.3f
+#define SPEED_KI 0.6f
 #define SPEED_INTEGRAL_LIMIT 50.0f
 
 // How much to reduce base speed at maximum error (100% error = 40% of base speed). This allows more time for correction when the error is large.
