@@ -729,191 +729,101 @@ void run_dummy_pid_test() {
     printf("Dummy P-control test complete.\n");
 }
 
-void run_keyboard_pid_control() {
-    constexpr float STEERING_ERROR = 40.0f;
-    constexpr uint32_t COMMAND_TIMEOUT_MS = 1000;
+struct SerialDriveState {
+    bool drive_command_active = false;
+    bool timeout_active = false;
+    uint32_t last_drive_command_ms = 0;
+};
 
-    int base_speed = BASE_SPEED_PERCENT;
-    bool moving = false;
-    uint32_t last_command_ms = 0;
+bool is_stop_command(const char *line) {
+    return strcmp(line, "S") == 0 ||
+           strcmp(line, "s") == 0 ||
+           strcmp(line, "STOP") == 0 ||
+           strcmp(line, "stop") == 0;
+}
+
+void handle_serial_command(const char *line, SerialDriveState &state) {
+    state.timeout_active = false;
+    set_all_leds(false);
+    set_status_led(true);
+    printf("Received from Pi: %s\n", line);
+
+    if (is_stop_command(line)) {
+        stop_all();
+        state.drive_command_active = false;
+        printf("Stopped\n");
+        return;
+    }
+
+    float new_kp;
+    float new_ki;
+    float new_kd;
+    if (parse_pid_command(line, new_kp, new_ki, new_kd)) {
+        stop_all();
+        state.drive_command_active = false;
+        line_kp = new_kp;
+        line_ki = new_ki;
+        line_kd = new_kd;
+        printf("PID gains updated: Kp=%.4f, Ki=%.4f, Kd=%.4f\n",
+               line_kp, line_ki, line_kd);
+        return;
+    }
+
+    float error;
+    int base_speed;
+    if (parse_drive_command(line, error, base_speed)) {
+        pid_drive(error, base_speed);
+        state.drive_command_active = base_speed > 0;
+        state.last_drive_command_ms = to_ms_since_boot(get_absolute_time());
+        printf("Drive command: error %.2f, base speed %d%%\n",
+               error, base_speed);
+        return;
+    }
 
     stop_all();
-    printf("\nKeyboard PID control\n");
-    printf("W = straight, A = left error, D = right error\n");
-    printf("Space or S = stop, +/- = speed, Q = quit\n");
-    printf("Hold or repeat W/A/D to keep moving. Speed: %d%%\n", base_speed);
-
-    while (true) {
-        int input = getchar_timeout_us(0);
-
-        if (input == 'q' || input == 'Q') {
-            stop_all();
-            printf("Keyboard PID control stopped.\n");
-            return;
-        }
-
-        float error = 0.0f;
-        bool drive_command = true;
-
-        switch (input) {
-            case 'w':
-            case 'W':
-                error = 0.0f;
-                break;
-
-            case 'a':
-            case 'A':
-                error = -STEERING_ERROR;
-                break;
-
-            case 'd':
-            case 'D':
-                error = STEERING_ERROR;
-                break;
-
-            case 's':
-            case 'S':
-            case ' ':
-                stop_all();
-                moving = false;
-                printf("Stopped\n");
-                drive_command = false;
-                break;
-
-            case '+':
-            case '=':
-                base_speed = clamp_int(base_speed + 5, 10, 100);
-                printf("Speed: %d%%\n", base_speed);
-                drive_command = false;
-                break;
-
-            case '-':
-            case '_':
-                base_speed = clamp_int(base_speed - 5, 10, 100);
-                printf("Speed: %d%%\n", base_speed);
-                drive_command = false;
-                break;
-
-            default:
-                drive_command = false;
-                break;
-        }
-
-        if (drive_command) {
-            pid_drive(error, base_speed);
-            moving = true;
-            last_command_ms = to_ms_since_boot(get_absolute_time());
-        }
-
-        uint32_t now_ms = to_ms_since_boot(get_absolute_time());
-        if (moving && now_ms - last_command_ms >= COMMAND_TIMEOUT_MS) {
-            stop_all();
-            moving = false;
-            printf("Stopped: keyboard command timeout\n");
-        }
-
-        sleep_ms(10);
-    }
+    state.drive_command_active = false;
+    printf("Invalid command. Expected D,error,base_speed, PID,kp,ki,kd, or S\n");
 }
+
+void check_serial_timeout(SerialDriveState &state, uint32_t timeout_ms) {
+    if (!state.drive_command_active) {
+        return;
+    }
+
+    uint32_t now_ms = to_ms_since_boot(get_absolute_time());
+    if (now_ms - state.last_drive_command_ms < timeout_ms) {
+        return;
+    }
+
+    stop_all();
+    state.drive_command_active = false;
+    state.timeout_active = true;
+    set_all_leds(true);
+    printf("Stopped: serial command timeout\n");
+}
+
 //------------------------Main Loop-------------------------//
 int main() {
-    // Initialize stdio for printf debugging (over USB).
-    stdio_init_all();
+    constexpr uint32_t SERIAL_COMMAND_TIMEOUT_MS = 500;
 
-    // Configure every GPIO and leave all outputs in a safe state.
+    stdio_init_all();
     setup_gpio();
     sleep_ms(3000);
 
-    // ----------------Testing code--------------------//
-    //run_led_test();
-    //run_button_test();
-    //run_hardware_test();
-    //run_dummy_pid_test();
-    //--------------------------------------------------//
-
     printf("Pico ready. Send D,error,base_speed (example D,-25.5,30).\n");
     printf("Send PID,kp,ki,kd to tune gains (example PID,0.2,0.0,0.1).\n");
-    printf("Send S to stop, or K/KB/KEYBOARD for keyboard mode.\n");
+    printf("Send S to stop.\n");
 
     char line[SERIAL_BUFFER_SIZE];
-    constexpr uint32_t SERIAL_COMMAND_TIMEOUT_MS = 500;
-    bool drive_command_active = false;
-    bool serial_timeout_active = false;
-    uint32_t last_drive_command_ms = 0;
+    SerialDriveState state;
 
     while (true) {
         if (read_serial_line(line, SERIAL_BUFFER_SIZE)) {
-            serial_timeout_active = false;
-            set_all_leds(false);
-            set_status_led(true);
-            printf("Received from Pi: %s\n", line);
-
-            bool keyboard_command =
-                strcmp(line, "K") == 0 ||
-                strcmp(line, "k") == 0 ||
-                strcmp(line, "KB") == 0 ||
-                strcmp(line, "kb") == 0 ||
-                strcmp(line, "KEYBOARD") == 0 ||
-                strcmp(line, "keyboard") == 0;
-
-            if (keyboard_command) {
-                drive_command_active = false;
-                run_keyboard_pid_control();
-            } else if (strcmp(line, "S") == 0 ||
-                       strcmp(line, "s") == 0 ||
-                       strcmp(line, "STOP") == 0 ||
-                       strcmp(line, "stop") == 0) {
-                stop_all();
-                drive_command_active = false;
-                printf("Stopped\n");
-            } else {
-                float new_kp;
-                float new_ki;
-                float new_kd;
-
-                if (parse_pid_command(line, new_kp, new_ki, new_kd)) {
-                    stop_all();
-                    drive_command_active = false;
-                    line_kp = new_kp;
-                    line_ki = new_ki;
-                    line_kd = new_kd;
-                    printf("PID gains updated: Kp=%.4f, Ki=%.4f, Kd=%.4f\n",
-                           line_kp,
-                           line_ki,
-                           line_kd);
-                } else {
-                    float error;
-                    int base_speed;
-
-                    if (parse_drive_command(line, error, base_speed)) {
-                        pid_drive(error, base_speed);
-                        drive_command_active = base_speed > 0;
-                        last_drive_command_ms = to_ms_since_boot(get_absolute_time());
-                        printf("Drive command: error %.2f, base speed %d%%\n",
-                               error,
-                               base_speed);
-                    } else {
-                        stop_all();
-                        drive_command_active = false;
-                        printf("Invalid command. Expected D,error,base_speed or PID,kp,ki,kd\n");
-                    }
-                }
-            }
+            handle_serial_command(line, state);
         }
 
-        uint32_t now_ms = to_ms_since_boot(get_absolute_time());
-        if (drive_command_active &&
-            now_ms - last_drive_command_ms >= SERIAL_COMMAND_TIMEOUT_MS) {
-            stop_all();
-            drive_command_active = false;
-            serial_timeout_active = true;
-            set_all_leds(true);
-            printf("Stopped: serial command timeout\n");
-        }
-
+        check_serial_timeout(state, SERIAL_COMMAND_TIMEOUT_MS);
+        set_status_led(state.timeout_active);
         sleep_ms(5);
-        if (!serial_timeout_active) {
-            set_status_led(false);
-        }
     }
 }
