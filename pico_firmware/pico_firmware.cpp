@@ -46,8 +46,9 @@
 //LED Strip Pins
 #define LED_STRIP1 16
 #define LED_STRIP2 17
-#define LED_STRIP1_COUNT 100
+#define LED_STRIP1_COUNT 43
 #define LED_STRIP_BRIGHTNESS 32
+#define LED_STRIP_FRAME_MS 30
 
 //Custom Pins (for future use, e.g. sensors)
 #define CUSTOM1 18
@@ -224,14 +225,64 @@ float map_range(float value,
 PIO led_strip_pio = pio0;
 uint led_strip_sm = 0;
 
+enum LedStripAnimationMode {
+    LED_ANIMATION_OFF,
+    LED_ANIMATION_RAINBOW,
+    LED_ANIMATION_CHASE,
+    LED_ANIMATION_BREATHE,
+    LED_ANIMATION_SPARKLE
+};
+
+struct LedStripAnimationState {
+    LedStripAnimationMode mode = LED_ANIMATION_RAINBOW;
+    uint32_t frame = 0;
+    uint32_t previous_update_ms = 0;
+    uint32_t random_state = 0x1234abcd;
+};
+
+LedStripAnimationState led_strip_animation;
+
 uint32_t strip_rgb(uint8_t red, uint8_t green, uint8_t blue) {
     return (static_cast<uint32_t>(green) << 16) |
            (static_cast<uint32_t>(red) << 8) |
            blue;
 }
 
+uint8_t scale_channel(uint8_t value, uint8_t brightness) {
+    return static_cast<uint8_t>((static_cast<uint16_t>(value) * brightness) / 255);
+}
+
+uint32_t strip_rgb_scaled(uint8_t red,
+                          uint8_t green,
+                          uint8_t blue,
+                          uint8_t brightness) {
+    return strip_rgb(scale_channel(red, brightness),
+                     scale_channel(green, brightness),
+                     scale_channel(blue, brightness));
+}
+
+uint32_t strip_color_wheel(uint8_t position, uint8_t brightness) {
+    position = 255 - position;
+
+    if (position < 85) {
+        return strip_rgb_scaled(255 - position * 3, 0, position * 3, brightness);
+    }
+
+    if (position < 170) {
+        position -= 85;
+        return strip_rgb_scaled(0, position * 3, 255 - position * 3, brightness);
+    }
+
+    position -= 170;
+    return strip_rgb_scaled(position * 3, 255 - position * 3, 0, brightness);
+}
+
 void led_strip_write(uint32_t color) {
     pio_sm_put_blocking(led_strip_pio, led_strip_sm, color << 8u);
+}
+
+void led_strip_show() {
+    sleep_us(80);
 }
 
 void led_strip_fill(uint32_t color) {
@@ -240,11 +291,204 @@ void led_strip_fill(uint32_t color) {
     }
 
     // WS2812 latch/reset time.
-    sleep_us(80);
+    led_strip_show();
 }
 
 void led_strip_clear() {
     led_strip_fill(0);
+}
+
+uint32_t led_strip_next_random(LedStripAnimationState &state) {
+    uint32_t value = state.random_state;
+    value ^= value << 13;
+    value ^= value >> 17;
+    value ^= value << 5;
+    state.random_state = value;
+    return value;
+}
+
+void render_rainbow_frame(const LedStripAnimationState &state) {
+    for (int i = 0; i < LED_STRIP1_COUNT; ++i) {
+        uint8_t hue = static_cast<uint8_t>((i * 256 / LED_STRIP1_COUNT) +
+                                           state.frame * 2);
+        led_strip_write(strip_color_wheel(hue, LED_STRIP_BRIGHTNESS));
+    }
+    led_strip_show();
+}
+
+void render_chase_frame(const LedStripAnimationState &state) {
+    int head = static_cast<int>(state.frame % LED_STRIP1_COUNT);
+
+    for (int i = 0; i < LED_STRIP1_COUNT; ++i) {
+        int distance = (head - i + LED_STRIP1_COUNT) % LED_STRIP1_COUNT;
+        uint32_t color = 0;
+
+        if (distance == 0) {
+            color = strip_rgb_scaled(255, 255, 255, LED_STRIP_BRIGHTNESS);
+        } else if (distance < 8) {
+            uint8_t brightness = static_cast<uint8_t>(
+                (LED_STRIP_BRIGHTNESS * (8 - distance)) / 8);
+            color = strip_rgb_scaled(255, 60, 0, brightness);
+        }
+
+        led_strip_write(color);
+    }
+    led_strip_show();
+}
+
+void render_breathe_frame(const LedStripAnimationState &state) {
+    float wave = (std::sinf(state.frame * 0.08f) + 1.0f) * 0.5f;
+    uint8_t brightness = static_cast<uint8_t>(4.0f + wave * LED_STRIP_BRIGHTNESS);
+    led_strip_fill(strip_rgb_scaled(0, 90, 255, brightness));
+}
+
+void render_sparkle_frame(LedStripAnimationState &state) {
+    uint8_t base_brightness = LED_STRIP_BRIGHTNESS / 10;
+
+    for (int i = 0; i < LED_STRIP1_COUNT; ++i) {
+        uint32_t random_value = led_strip_next_random(state);
+
+        if ((random_value & 0x0f) == 0) {
+            uint8_t hue = static_cast<uint8_t>(random_value >> 8);
+            led_strip_write(strip_color_wheel(hue, LED_STRIP_BRIGHTNESS));
+        } else {
+            led_strip_write(strip_rgb_scaled(2, 2, 6, base_brightness));
+        }
+    }
+    led_strip_show();
+}
+
+const char *led_strip_animation_name(LedStripAnimationMode mode) {
+    switch (mode) {
+        case LED_ANIMATION_OFF:
+            return "off";
+        case LED_ANIMATION_RAINBOW:
+            return "rainbow";
+        case LED_ANIMATION_CHASE:
+            return "chase";
+        case LED_ANIMATION_BREATHE:
+            return "breathe";
+        case LED_ANIMATION_SPARKLE:
+            return "sparkle";
+        default:
+            return "unknown";
+    }
+}
+
+void set_led_strip_animation(LedStripAnimationMode mode) {
+    led_strip_animation.mode = mode;
+    led_strip_animation.frame = 0;
+    led_strip_animation.previous_update_ms = 0;
+
+    if (mode == LED_ANIMATION_OFF) {
+        led_strip_clear();
+    }
+
+    printf("LED strip animation: %s\n", led_strip_animation_name(mode));
+}
+
+void cycle_led_strip_animation() {
+    LedStripAnimationMode next_mode = LED_ANIMATION_RAINBOW;
+
+    switch (led_strip_animation.mode) {
+        case LED_ANIMATION_RAINBOW:
+            next_mode = LED_ANIMATION_CHASE;
+            break;
+        case LED_ANIMATION_CHASE:
+            next_mode = LED_ANIMATION_BREATHE;
+            break;
+        case LED_ANIMATION_BREATHE:
+            next_mode = LED_ANIMATION_SPARKLE;
+            break;
+        case LED_ANIMATION_SPARKLE:
+            next_mode = LED_ANIMATION_OFF;
+            break;
+        case LED_ANIMATION_OFF:
+        default:
+            next_mode = LED_ANIMATION_RAINBOW;
+            break;
+    }
+
+    set_led_strip_animation(next_mode);
+}
+
+bool parse_led_strip_animation_command(const char *line,
+                                       LedStripAnimationMode &mode,
+                                       bool &cycle) {
+    cycle = false;
+
+    if (strcmp(line, "L") == 0 ||
+        strcmp(line, "l") == 0 ||
+        strcmp(line, "LED") == 0 ||
+        strcmp(line, "led") == 0 ||
+        strcmp(line, "LIGHT") == 0 ||
+        strcmp(line, "light") == 0) {
+        cycle = true;
+        return true;
+    }
+
+    const char *animation = nullptr;
+    if (strncmp(line, "LED,", 4) == 0 || strncmp(line, "led,", 4) == 0) {
+        animation = line + 4;
+    } else if (strncmp(line, "LIGHT,", 6) == 0 ||
+               strncmp(line, "light,", 6) == 0) {
+        animation = line + 6;
+    }
+
+    if (animation == nullptr) {
+        return false;
+    }
+
+    if (strcmp(animation, "RAINBOW") == 0 || strcmp(animation, "rainbow") == 0) {
+        mode = LED_ANIMATION_RAINBOW;
+    } else if (strcmp(animation, "CHASE") == 0 || strcmp(animation, "chase") == 0) {
+        mode = LED_ANIMATION_CHASE;
+    } else if (strcmp(animation, "BREATHE") == 0 || strcmp(animation, "breathe") == 0) {
+        mode = LED_ANIMATION_BREATHE;
+    } else if (strcmp(animation, "SPARKLE") == 0 || strcmp(animation, "sparkle") == 0) {
+        mode = LED_ANIMATION_SPARKLE;
+    } else if (strcmp(animation, "OFF") == 0 || strcmp(animation, "off") == 0) {
+        mode = LED_ANIMATION_OFF;
+    } else {
+        return false;
+    }
+
+    return true;
+}
+
+void update_led_strip_animation() {
+    if (led_strip_animation.mode == LED_ANIMATION_OFF) {
+        return;
+    }
+
+    uint32_t now_ms = to_ms_since_boot(get_absolute_time());
+    if (led_strip_animation.previous_update_ms != 0 &&
+        now_ms - led_strip_animation.previous_update_ms < LED_STRIP_FRAME_MS) {
+        return;
+    }
+
+    led_strip_animation.previous_update_ms = now_ms;
+
+    switch (led_strip_animation.mode) {
+        case LED_ANIMATION_RAINBOW:
+            render_rainbow_frame(led_strip_animation);
+            break;
+        case LED_ANIMATION_CHASE:
+            render_chase_frame(led_strip_animation);
+            break;
+        case LED_ANIMATION_BREATHE:
+            render_breathe_frame(led_strip_animation);
+            break;
+        case LED_ANIMATION_SPARKLE:
+            render_sparkle_frame(led_strip_animation);
+            break;
+        case LED_ANIMATION_OFF:
+        default:
+            led_strip_clear();
+            break;
+    }
+
+    led_strip_animation.frame++;
 }
 
 void setup_led_strip1() {
@@ -255,7 +499,7 @@ void setup_led_strip1() {
                         LED_STRIP1,
                         800000,
                         false);
-    led_strip_clear();
+    set_led_strip_animation(LED_ANIMATION_RAINBOW);
 }
 
 void run_led_strip1_test() {
@@ -930,13 +1174,6 @@ bool is_stop_command(const char *line) {
            strcmp(line, "stop") == 0;
 }
 
-bool is_led_strip_test_command(const char *line) {
-    return strcmp(line, "L") == 0 ||
-           strcmp(line, "l") == 0 ||
-           strcmp(line, "LED") == 0 ||
-           strcmp(line, "led") == 0;
-}
-
 void handle_serial_command(const char *line, SerialDriveState &state) {
     state.timeout_active = false;
     set_all_leds(false);
@@ -950,10 +1187,18 @@ void handle_serial_command(const char *line, SerialDriveState &state) {
         return;
     }
 
-    if (is_led_strip_test_command(line)) {
+    LedStripAnimationMode led_animation_mode;
+    bool cycle_led_animation = false;
+    if (parse_led_strip_animation_command(line,
+                                          led_animation_mode,
+                                          cycle_led_animation)) {
         stop_all();
         state.drive_command_active = false;
-        run_led_strip1_test();
+        if (cycle_led_animation) {
+            cycle_led_strip_animation();
+        } else {
+            set_led_strip_animation(led_animation_mode);
+        }
         return;
     }
 
@@ -984,7 +1229,7 @@ void handle_serial_command(const char *line, SerialDriveState &state) {
 
     stop_all();
     state.drive_command_active = false;
-    printf("Invalid command. Expected D,error,base_speed, PID,kp,ki,kd, L, or S\n");
+    printf("Invalid command. Expected D,error,base_speed, PID,kp,ki,kd, LED,mode, L, or S\n");
 }
 
 void check_serial_timeout(SerialDriveState &state, uint32_t timeout_ms) {
@@ -1012,11 +1257,11 @@ int main() {
     setup_gpio();
     setup_led_strip1();
     sleep_ms(3000);
-    run_led_strip1_test();
 
     printf("Pico ready. Send D,error,base_speed (example D,-25.5,30).\n");
     printf("Send PID,kp,ki,kd to tune steering gains.\n");
-    printf("Send L to test LED strip 1.\n");
+    printf("Send L to cycle LED animations.\n");
+    printf("Send LED,RAINBOW, LED,CHASE, LED,BREATHE, LED,SPARKLE, or LED,OFF.\n");
     printf("Send S to stop.\n");
 
     char line[SERIAL_BUFFER_SIZE];
@@ -1034,6 +1279,7 @@ int main() {
         if (update_encoder_rpm(rpm_state)) {
             update_wheel_speed_control(rpm_state, speed_control);
         }
+        update_led_strip_animation();
         set_status_led(serial_state.timeout_active);
         sleep_ms(5);
     }
