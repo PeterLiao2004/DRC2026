@@ -1,6 +1,9 @@
 #include "pico/stdlib.h"
+#include "hardware/clocks.h"
 #include "hardware/pwm.h"
+#include "hardware/pio.h"
 #include "hardware/sync.h"
+#include "ws2812.pio.h"
 #include <stdio.h>
 #include <cstdlib>
 #include <cstdint>
@@ -43,6 +46,8 @@
 //LED Strip Pins
 #define LED_STRIP1 16
 #define LED_STRIP2 17
+#define LED_STRIP1_COUNT 100
+#define LED_STRIP_BRIGHTNESS 32
 
 //Custom Pins (for future use, e.g. sensors)
 #define CUSTOM1 18
@@ -213,6 +218,62 @@ float map_range(float value,
     const float output_range = output_max - output_min;
 
     return output_min + normalized_value * output_range;
+}
+
+//---------------------LED Strip Control------------------//
+PIO led_strip_pio = pio0;
+uint led_strip_sm = 0;
+
+uint32_t strip_rgb(uint8_t red, uint8_t green, uint8_t blue) {
+    return (static_cast<uint32_t>(green) << 16) |
+           (static_cast<uint32_t>(red) << 8) |
+           blue;
+}
+
+void led_strip_write(uint32_t color) {
+    pio_sm_put_blocking(led_strip_pio, led_strip_sm, color << 8u);
+}
+
+void led_strip_fill(uint32_t color) {
+    for (int i = 0; i < LED_STRIP1_COUNT; ++i) {
+        led_strip_write(color);
+    }
+
+    // WS2812 latch/reset time.
+    sleep_us(80);
+}
+
+void led_strip_clear() {
+    led_strip_fill(0);
+}
+
+void setup_led_strip1() {
+    uint offset = pio_add_program(led_strip_pio, &ws2812_program);
+    ws2812_program_init(led_strip_pio,
+                        led_strip_sm,
+                        offset,
+                        LED_STRIP1,
+                        800000,
+                        false);
+    led_strip_clear();
+}
+
+void run_led_strip1_test() {
+    printf("LED strip 1 test: red, green, blue, white.\n");
+
+    led_strip_fill(strip_rgb(LED_STRIP_BRIGHTNESS, 0, 0));
+    sleep_ms(500);
+    led_strip_fill(strip_rgb(0, LED_STRIP_BRIGHTNESS, 0));
+    sleep_ms(500);
+    led_strip_fill(strip_rgb(0, 0, LED_STRIP_BRIGHTNESS));
+    sleep_ms(500);
+    led_strip_fill(strip_rgb(LED_STRIP_BRIGHTNESS,
+                             LED_STRIP_BRIGHTNESS,
+                             LED_STRIP_BRIGHTNESS));
+    sleep_ms(500);
+    led_strip_clear();
+
+    printf("LED strip 1 test complete.\n");
 }
 
 //--------------------Serial Communication------------------//
@@ -869,6 +930,13 @@ bool is_stop_command(const char *line) {
            strcmp(line, "stop") == 0;
 }
 
+bool is_led_strip_test_command(const char *line) {
+    return strcmp(line, "L") == 0 ||
+           strcmp(line, "l") == 0 ||
+           strcmp(line, "LED") == 0 ||
+           strcmp(line, "led") == 0;
+}
+
 void handle_serial_command(const char *line, SerialDriveState &state) {
     state.timeout_active = false;
     set_all_leds(false);
@@ -879,6 +947,13 @@ void handle_serial_command(const char *line, SerialDriveState &state) {
         stop_all();
         state.drive_command_active = false;
         printf("Stopped\n");
+        return;
+    }
+
+    if (is_led_strip_test_command(line)) {
+        stop_all();
+        state.drive_command_active = false;
+        run_led_strip1_test();
         return;
     }
 
@@ -909,7 +984,7 @@ void handle_serial_command(const char *line, SerialDriveState &state) {
 
     stop_all();
     state.drive_command_active = false;
-    printf("Invalid command. Expected D,error,base_speed, PID,kp,ki,kd, or S\n");
+    printf("Invalid command. Expected D,error,base_speed, PID,kp,ki,kd, L, or S\n");
 }
 
 void check_serial_timeout(SerialDriveState &state, uint32_t timeout_ms) {
@@ -935,10 +1010,13 @@ int main() {
 
     stdio_init_all();
     setup_gpio();
+    setup_led_strip1();
     sleep_ms(3000);
+    run_led_strip1_test();
 
     printf("Pico ready. Send D,error,base_speed (example D,-25.5,30).\n");
     printf("Send PID,kp,ki,kd to tune steering gains.\n");
+    printf("Send L to test LED strip 1.\n");
     printf("Send S to stop.\n");
 
     char line[SERIAL_BUFFER_SIZE];
